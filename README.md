@@ -71,4 +71,7 @@ TODO: Write usage instructions here
 
 # igv appended README #
 
-{"error":"Not Found"}
+igv-web
+=======
+
+Lightweight HTML-5 versison of the Integrative Genomics Viewer (http://www.broadinstitute.org/igv).

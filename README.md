@@ -5,9 +5,11 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 		bundle gem igv-rails
 		cd igv-rails
 		mkdir -p vendor/assets/javascripts
-		curl http://www.broadinstitute.org/igv/projects/igv-web/dist/igv-all.min.js -o vendor/assets/javascripts/igv-all.min.js
+		curl http://www.broadinstitute.org/igv/projects/igv-web/dist/igv-all.min.js -o vendor/assets/javascripts/igv-all.js
 		mkdir -p vendor/assets/stylesheets
 		curl http://www.broadinstitute.org/igv/projects/igv-web/css/igv.css -o vendor/assets/stylesheets/igv.css
+		mkdir -p vendor/assets/images
+		curl http://www.broadinstitute.org/igv/projects/igv-web/dist/igv-all.min.map -o vendor/assets/images/igv-all.min.map
 		echo "" >> README.md; echo "# igv appended README #" >> README.md; echo "" >> README.md
 		curl https://github.com/broadinstitute/igv-web/blob/master/README.md >> README.md
 		echo "" >> LICENSE; echo "# igv appended LICENSE #" >> LICENSE; echo "" >> LICENSE
@@ -18,7 +20,7 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 
 * modify **lib/igv/rails/version.rb** to match igv-all.min.js version
 
-		VERSION = "0.0.1"
+		VERSION = "0.0.1.*"
 
 * modify **lib/igv/rails.rb** to subclass Rails::Engine
 
@@ -28,13 +30,10 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 * modify **igv-rails.gemspec**
 
 	  spec.summary       = "IGV for Rails."
-	  spec.description   = "This gem provides igv-all.min.js and igv.css for your Rails application."
+	  spec.description   = "This gem provides igv javascript, css, and images for your Rails application."
 	  spec.homepage      = "https://github.com/vanetten/igv-rails"
 	  spec.files         = `git ls-files -z`.split("\x0") + ["LICENSE", "README.md"]
 	  spec.add_dependency "railties", "~> 4.1"
-	  spec.add_dependency "font-awesome-rails", "~> 4.3"
-	  spec.add_dependency "jquery-rails", "~> 3.1"
-	  spec.add_dependency "jquery-ui-rails", "~> 5.3"
 
 * build
 
@@ -62,7 +61,58 @@ Or install it yourself as:
 
 ## Usage
 
-TODO: Write usage instructions here
+In your Gemfile, add:
+
+```ruby
+gem 'font-awesome-rails'
+gem 'jquery-rails'
+gem 'jquery-ui-rails'
+gem 'igv-rails'
+```
+
+## Require Everything
+
+To require IGV and all dependencies, add the following to your application.js:
+
+```javascript
+//= require jquery
+//= require jquery-ui
+//= require igv-all
+```
+
+Also add IGV CSS and all dependencies to your application.css:
+
+```css
+/*
+*= require font-awesome
+*= require jquery-ui
+*= require igv
+*/
+```
+
+Add a div container to your view:
+
+```<div id="myDiv"></div>
+```
+
+Add javascript to load IGV:
+```$(document).ready(function () {
+var div = $("#myDiv")[0],
+        options = {
+            showNavigation: true,
+            genome: "hg19",
+            locus: "chr1:155,172,193-155,172,564",
+            tracks: [
+                {
+                    url: '//www.broadinstitute.org/igvdata/1KG/b37/data/NA06984/alignment/NA06984.mapped.ILLUMINA.bwa.CEU.low_coverage.20120522.bam',
+                    label: 'NA06984'
+                }
+            ]
+        };
+
+igv.createBrowser(div, options);
+});
+```
 
 ## Contributing
 

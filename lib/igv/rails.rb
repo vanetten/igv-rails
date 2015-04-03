@@ -2,6 +2,7 @@ require "igv/rails/version"
 
 module Igv
   module Rails
-    # Your code goes here...
+	class Engine < ::Rails::Engine
+	end
   end
 end

@@ -18,7 +18,7 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 		git commit -am "igv-rails"
 		git remote add origin git@github.com:vanetten/igv-rails.git
 
-* modify **lib/igv/rails/version.rb** to match igv-all.min.js version
+* modify **lib/igv/rails/version.rb** to match igv-all.js version
 
 		VERSION = "0.0.1.*"
 

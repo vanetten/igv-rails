@@ -18,7 +18,7 @@ Or install it yourself as:
 
 ## Usage
 
-In your Gemfile, add:
+Add IGV and dependencies to your Gemfile:
 
 ```ruby
 gem 'font-awesome-rails'
@@ -125,7 +125,7 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 * release
 
 		rake release
-		
+
 ## igv appended README
 
 igv-web

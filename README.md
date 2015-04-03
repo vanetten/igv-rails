@@ -18,7 +18,7 @@ Or install it yourself as:
 
 ## Usage
 
-Add IGV and dependencies to the application's Gemfile:
+Add IGV (and dependencies) to the application's Gemfile:
 
 ```ruby
 gem 'font-awesome-rails'

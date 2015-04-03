@@ -32,6 +32,9 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 	  spec.homepage      = "https://github.com/vanetten/igv-rails"
 	  spec.files         = `git ls-files -z`.split("\x0") + ["LICENSE", "README.md"]
 	  spec.add_dependency "railties", "~> 4.1"
+	  spec.add_dependency "font-awesome-rails", "~> 4.3"
+	  spec.add_dependency "jquery-rails", "~> 3.1"
+	  spec.add_dependency "jquery-ui-rails", "~> 5.3"
 
 * build
 

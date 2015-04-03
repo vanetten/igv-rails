@@ -29,11 +29,11 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 
 * modify **igv-rails.gemspec**
 
-	  spec.summary       = "IGV for Rails."
-	  spec.description   = "This gem provides igv javascript, css, and images for your Rails application."
-	  spec.homepage      = "https://github.com/vanetten/igv-rails"
-	  spec.files         = `git ls-files -z`.split("\x0") + ["LICENSE", "README.md"]
-	  spec.add_dependency "railties", "~> 4.1"
+		spec.summary       = "IGV for Rails."
+		spec.description   = "This gem provides igv javascript, css, and images for your Rails application."
+		spec.homepage      = "https://github.com/vanetten/igv-rails"
+		spec.files         = `git ls-files -z`.split("\x0") + ["LICENSE", "README.md"]
+		spec.add_dependency "railties", "~> 4.1"
 
 * build
 
@@ -92,10 +92,12 @@ Also add IGV CSS and all dependencies to your application.css:
 
 Add a div container to your view:
 
-```<div id="myDiv"></div>
+```html
+<div id="myDiv"></div>
 ```
 
 Add javascript to load IGV:
+
 ```$(document).ready(function () {
 var div = $("#myDiv")[0],
         options = {

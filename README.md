@@ -2,7 +2,7 @@
 
 ## Installation
 
-Add this line to your application's Gemfile:
+Add this line to the application's Gemfile:
 
 ```ruby
 gem 'igv-rails'
@@ -18,7 +18,7 @@ Or install it yourself as:
 
 ## Usage
 
-Add IGV and dependencies to your Gemfile:
+Add IGV and dependencies to the application's Gemfile:
 
 ```ruby
 gem 'font-awesome-rails'
@@ -27,9 +27,7 @@ gem 'jquery-ui-rails'
 gem 'igv-rails'
 ```
 
-## Require Everything
-
-To require IGV and all dependencies, add the following to your application.js:
+Require IGV (and dependencies) to the application's application.js:
 
 ```javascript
 //= require jquery
@@ -37,7 +35,7 @@ To require IGV and all dependencies, add the following to your application.js:
 //= require igv-all
 ```
 
-Also add IGV CSS and all dependencies to your application.css:
+Require IGV CSS (and dependencies) to the application's application.css:
 
 ```css
 /*
@@ -47,13 +45,15 @@ Also add IGV CSS and all dependencies to your application.css:
 */
 ```
 
-Add a div container to your view:
+## Example
+
+Provide a div container within a view:
 
 ```html
 <div id="myDiv"></div>
 ```
 
-Add javascript to load IGV:
+Provide javascript to configure and load IGV within the view:
 
 ```javascript
 $(document).ready(function () {

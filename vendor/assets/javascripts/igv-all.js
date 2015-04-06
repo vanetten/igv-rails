@@ -2749,7 +2749,7 @@ var igv = (function (igv) {
                     self.header.uncompressBuffSize = binaryParser.getInt();
                     self.header.reserved = binaryParser.getLong();
 
-                   loadZoomHeadersAndChrTree.call(this, continuation);
+                   loadZoomHeadersAndChrTree.call(self, continuation);
                 })
 
             });
@@ -2761,55 +2761,55 @@ var igv = (function (igv) {
 
 
         var startOffset = BBFILE_HEADER_SIZE,
-            bwReader = this;
+            self = this;
 
         igvxhr.loadArrayBuffer(this.path,
             {
-                headers: this.config.headers,
+                headers: self.config.headers,
                 range: {start: startOffset, size: (this.header.fullDataOffset - startOffset + 5)},
                 success: function (data) {
 
-                    var nZooms = bwReader.header.nZoomLevels,
+                    var nZooms = self.header.nZoomLevels,
                         binaryParser = new igv.BinaryParser(new DataView(data)),
                         i,
                         len,
                         zoomNumber,
                         zlh;
 
-                    bwReader.zoomLevelHeaders = [];
+                    self.zoomLevelHeaders = [];
 
-                    bwReader.firstZoomDataOffset = Number.MAX_VALUE;
+                    self.firstZoomDataOffset = Number.MAX_VALUE;
                     for (i = 0; i < nZooms; i++) {
                         zoomNumber = nZooms - i;
                         zlh = new ZoomLevelHeader(zoomNumber, binaryParser);
-                        bwReader.firstZoomDataOffset = Math.min(zlh.dataOffset, bwReader.firstZoomDataOffset);
-                        bwReader.zoomLevelHeaders.push(zlh);
+                        self.firstZoomDataOffset = Math.min(zlh.dataOffset, self.firstZoomDataOffset);
+                        self.zoomLevelHeaders.push(zlh);
                     }
 
                     // Autosql
-                    if (bwReader.header.autoSqlOffset > 0) {
-                        binaryParser.position = bwReader.header.autoSqlOffset - startOffset;
-                        bwReader.autoSql = binaryParser.getString();
+                    if (self.header.autoSqlOffset > 0) {
+                        binaryParser.position = self.header.autoSqlOffset - startOffset;
+                        self.autoSql = binaryParser.getString();
                     }
 
                     // Total summary
-                    if (bwReader.header.totalSummaryOffset > 0) {
-                        binaryParser.position = bwReader.header.totalSummaryOffset - startOffset;
-                        bwReader.totalSummary = new igv.BWTotalSummary(binaryParser);
+                    if (self.header.totalSummaryOffset > 0) {
+                        binaryParser.position = self.header.totalSummaryOffset - startOffset;
+                        self.totalSummary = new igv.BWTotalSummary(binaryParser);
                     }
 
                     // Chrom data index
-                    if (bwReader.header.chromTreeOffset > 0) {
-                        binaryParser.position = bwReader.header.chromTreeOffset - startOffset;
-                        bwReader.chromTree = new igv.BPTree(binaryParser, 0);
+                    if (self.header.chromTreeOffset > 0) {
+                        binaryParser.position = self.header.chromTreeOffset - startOffset;
+                        self.chromTree = new igv.BPTree(binaryParser, 0);
                     }
                     else {
                         // TODO -- this is an error, not expected
                     }
 
                     //Finally total data count
-                    binaryParser.position = bwReader.header.fullDataOffset - startOffset;
-                    bwReader.dataCount = binaryParser.getInt();
+                    binaryParser.position = self.header.fullDataOffset - startOffset;
+                    self.dataCount = binaryParser.getInt();
 
                     continutation();
                 }
@@ -3618,8 +3618,15 @@ var igv = (function (igv) {
 
             this.cursorModel.initializeHistogram(trackView.track, function () {
 
+                if (myself.designatedTrack === track) {
+                    myself.selectDesignatedTrack(myself.designatedTrack.trackFilter.trackPanel);
+                }
+
                 if (track.config && track.config.trackFilter) {
+
                     track.trackFilter.setWithJSON(track.config.trackFilter);
+
+
                 }
 
                 myself.resize();
@@ -5120,10 +5127,11 @@ var cursor = (function (cursor) {
     // and span the bases 0 - 99.
     cursor.CursorRegion.prototype.exportRegion = function (regionWidth) {
 
-        var halfWidth = regionWidth/2;
+        var halfWidth = regionWidth/ 2,
+            ss = Math.floor(    this.location - halfWidth),
+            ee = Math.floor(1 + this.location + halfWidth);
 
-        // Add 1 to end to conform to BED format
-        return this.chr + "\t" + (this.location - halfWidth) + "\t" + (this.location + halfWidth + 1) + "\n";
+        return this.chr + "\t" + ss + "\t" + ee + "\n";
 
     };
 
@@ -5236,20 +5244,8 @@ var cursor = (function (cursor) {
 
                     allFeatures = featureCache.allFeatures();
 
-                    if (undefined === myself.scoreless) {
-                        myself.scoreless = true;
-                        allFeatures.forEach(function (f) {
 
-                            // do stuff
-                            if (true === myself.scoreless) {
-                                if (f.score) {
-                                    myself.scoreless = false;
-                                }
-                            }
-                        });
-                    }
-
-                    myself.max = (false === myself.scoreless) ? maxValue(allFeatures, 98) : undefined;
+                    myself.max = percentile(allFeatures, 98);
 
                     myself.featureCache = featureCache;
 
@@ -5273,6 +5269,9 @@ var cursor = (function (cursor) {
                         myself.color = "rgb(" + header.color + ")";
                         if (myself.cursorHistogram) myself.cursorHistogram.render(this);
                     }
+                    if(header.height && !myself.config.trackHeight) {
+                        myself.height = header.height;
+                    }
                 }
                 else {
                     this.header = null;   // Insure it has a value other than undefined
@@ -5283,9 +5282,9 @@ var cursor = (function (cursor) {
     }
 
 
-    function maxValue(featureList, percentile) {
+    function percentile(featureList, per) {
 
-        var idx = Math.floor(featureList.length * percentile / 100);
+        var idx = Math.floor(featureList.length * per / 100);
 
         featureList.sort(function (a, b) {
 
@@ -5367,10 +5366,11 @@ var cursor = (function (cursor) {
 
             igv.Canvas.setProperties.call(ctx, {fillStyle: this.color, strokeStyle: this.color});
 
-
             for (regionNumber = Math.floor(start), len = regions.length;
                  regionNumber < len && regionNumber < end;
                  regionNumber += sampleInterval) {
+
+                //igv.Canvas.setProperties.call(ctx, {fillStyle: igv.randomRGB(128, 255), strokeStyle: this.color});
 
                 region = regions[regionNumber];
 
@@ -5412,6 +5412,7 @@ var cursor = (function (cursor) {
                             if (score > this.max) {
                                 console.log(score);
                             }
+
                             igv.Canvas.fillRect.call(ctx, pStart, top, pw, fh);
 
                         }
@@ -5419,21 +5420,9 @@ var cursor = (function (cursor) {
                 }
                 else {
 
-                    if (false === myself.scoreless) {
-
-                        // Can't draw individual features, just use region score
-                        score = region.getScore(featureCache, regionWidth);
-                    }
-
                     pw = pxEnd - pxStart;
-                    if (true === myself.scoreless) {
-
-                        top = 0;
-                        fh = myself.height;
-                        igv.Canvas.fillRect.call(ctx, pxStart, top, pw, fh);
-
-                    }
-                    else if (score > 0) {
+                    score = region.getScore(featureCache, regionWidth);
+                    if (score > 0) {
                         // Height proportional to score
                         fh = Math.round(((score / myself.max) * maxFeatureHeight));
                         top = myself.height - fh;
@@ -5748,7 +5737,7 @@ var igv = (function (igv) {
 
                 $('#igvSessionLoadModal').modal('hide');
 
-                browser.loadSession(session);
+                browser.initializeWithSession(session);
 
             };
 
@@ -5759,15 +5748,9 @@ var igv = (function (igv) {
         // BED file upload
         document.getElementById('igvFileUpload').onchange = function (e) {
 
-            var localFile = $(this)[ 0 ].files[ 0 ],
-                config = { type: "bed", localFile: localFile, label: localFile.name };
+            var localFile = $(this)[ 0 ].files[ 0 ];
 
-            if (0 === igv.browser.trackViews.length) {
-                config.designatedTrack = true;
-                igv.browser.initializeWithTrackConfig(config);
-            } else {
-                igv.browser.loadTrack(config);
-            }
+            configureTrackWithLocalFileOrPath( { type: "bed", localFile: localFile, label: localFile.name } );
 
             $(this).val("");
             $('#igvFileUploadModal').modal('hide');
@@ -5776,19 +5759,26 @@ var igv = (function (igv) {
         // BED URL upload
         document.getElementById('igvLoadURL').onchange = function (e) {
 
-            var path = $(this).val(),
-                config = { type: "bed", url: path, label: igv.browser.trackLabelWithPath(path) };
+            var path = $(this).val();
 
-            if (0 === igv.browser.trackViews.length) {
-                config.designatedTrack = true;
-                igv.browser.initializeWithTrackConfig(config);
-            } else {
-                igv.browser.loadTrack(config);
-            }
+            configureTrackWithLocalFileOrPath( { type: "bed", url: path, label: igv.browser.trackLabelWithPath(path) } );
 
             $(this).val("");
             $('#igvLoadURLModal').modal('hide');
+
         };
+
+        function configureTrackWithLocalFileOrPath(config) {
+
+            if (0 === igv.browser.trackViews.length) {
+                config.designatedTrack = true;
+                igv.browser.initializeWithTrackConfigurations([config]);
+            }
+            else {
+                igv.browser.loadTrackWithConfigurations([config]);
+            }
+
+        }
 
         // Load ENCODE DataTables data and build markup for modal dialog.
         encode.createEncodeDataTablesDataSet("resources/peaks.hg19.txt", function (dataSet) {
@@ -5848,7 +5838,8 @@ var igv = (function (igv) {
                     tableRows,
                     tableCell,
                     tableCells,
-                    record = {};
+                    record = {},
+                    configurations = [];
 
                 tableRows = myDataTable.$('tr.selected');
 
@@ -5878,32 +5869,21 @@ var igv = (function (igv) {
 
                         });
 
-                        if (0 === browser.trackViews.length) {
+                        configurations.push({
+                            type: "bed",
+                            url: record.path,
+                            label: encode.encodeTrackLabel(record),
+                            color: encode.encodeAntibodyColor(record.antibody),
+                        });
 
-                            // When loading first track into app
-                            // with no pre-exisiting tracks.
-                            // set track as designated track
-                            browser.initializeWithTrackConfig({
-                                type: "bed",
-                                url: record.path,
-                                label: encode.encodeTrackLabel(record),
-                                color: encode.encodeAntibodyColor(record.antibody),
-                                designatedTrack: true
-                            });
+                    } // for (tableRows)
 
-                        }
-                        else {
-
-                            browser.loadTrack({
-                                type: "bed",
-                                url: record.path,
-                                label: encode.encodeTrackLabel(record),
-                                color: encode.encodeAntibodyColor(record.antibody)
-                            });
-
-                        }
-
-
+                    if (0 === browser.trackViews.length) {
+                        configurations[ 0 ].designatedTrack = true;
+                        igv.browser.initializeWithTrackConfigurations(configurations);
+                    }
+                    else {
+                        igv.browser.loadTrackWithConfigurations(configurations);
                     }
 
                 }
@@ -5918,6 +5898,11 @@ var igv = (function (igv) {
         // Construct DOM hierarchy
         trackContainer = $('<div id="igvTrackContainerDiv" class="igv-track-container-div">')[0];
         browser = new igv.Browser(options, trackContainer);
+
+        // Attach spinner to root div
+        browser.div.appendChild(igv.spinner());
+        igv.stopSpinnerAtParentElement(browser.div);
+
         document.getElementById('igvContainerDiv').appendChild(browser.div);
 
         contentHeader = $('<div class="row"></div>')[0];
@@ -5957,7 +5942,7 @@ var igv = (function (igv) {
 
 
                 console.log("launchSession: " + JSON.stringify(session));
-                browser.loadSession(session);
+                browser.initializeWithSession(session);
 
             });
 
@@ -5968,7 +5953,7 @@ var igv = (function (igv) {
                 return;
             }
 
-            browser.initializeWithOptions(options);
+            browser.initializeWithTrackConfigurations(options.tracks);
 
         }
 
@@ -5979,51 +5964,223 @@ var igv = (function (igv) {
 
         browser.crossDomainProxy = "php/simpleProxy.php";
 
-        browser.initializeWithTrackConfig = function (trackConfig) {
+        browser.loadTrackWithConfigurations = function (configurations) {
 
-            var horizontalScrollBarContainer;
+            var tracks = [];
+            configurations.forEach(function(configuration){
 
-            browser.loadTrack(trackConfig);
+                var track = cursorTrackWithConfig(configuration, browser);
 
-            browser.selectDesignatedTrack(browser.designatedTrack.trackFilter.trackPanel);
+                if (undefined !== track) {
+                    tracks.push(track);
+                }
 
-            horizontalScrollBarContainer = $("div.igv-horizontal-scrollbar-container-div");
-            browser.horizontalScrollbar = new cursor.HorizontalScrollbar(browser, $(horizontalScrollBarContainer));
+            });
 
-            browser.designatedTrack.featureSource.allFeatures(function (featureList) {
+            if (0 === tracks.length) {
+                return;
+            }
 
-                browser.cursorModel.setRegions(featureList);
+            if (undefined === browser.designatedTrack) {
+                browser.designatedTrack = tracks[ 0 ];
+            }
 
-                browser.horizontalScrollbar.update();
+            browser.getFeaturesForTracks(tracks, function () {
+
+                tracks.forEach(function (track) {
+                    browser.addTrack(track);
+                });
+
             });
 
         };
 
-        browser.initializeWithOptions = function (options) {
+        browser.initializeWithTrackConfigurations = function (configurations) {
 
-            var howmany,
-                horizontalScrollBarContainer;
+            var tracks = [];
+            configurations.forEach(function(configuration){
 
-            howmany = 0;
-            options.tracks.forEach(function (trackConfig) {
+                var track = cursorTrackWithConfig(configuration, browser);
 
-                browser.loadTrack(trackConfig);
+                if (undefined !== track) {
+                    tracks.push(track);
+                }
 
-                if (++howmany === options.tracks.length) {
+            });
 
-                    browser.selectDesignatedTrack(browser.designatedTrack.trackFilter.trackPanel);
+            if (0 === tracks.length) {
+                return;
+            }
 
-                    horizontalScrollBarContainer = $("div.igv-horizontal-scrollbar-container-div");
+            if (undefined === browser.designatedTrack) {
+                browser.designatedTrack = tracks[ 0 ];
+            }
+
+            browser.getFeaturesForTracks(tracks, function () {
+
+                tracks.forEach(function (track) {
+                    browser.addTrack(track);
+                });
+
+                browser.designatedTrack.featureSource.allFeatures(function (features) {
+
+                    var horizontalScrollBarContainer = $("div.igv-horizontal-scrollbar-container-div");
                     browser.horizontalScrollbar = new cursor.HorizontalScrollbar(browser, $(horizontalScrollBarContainer));
 
-                    browser.designatedTrack.featureSource.allFeatures(function (featureList) {
+                    browser.cursorModel.setRegions(features);
 
-                        browser.cursorModel.setRegions(featureList);
+                    browser.horizontalScrollbar.update();
+                });
 
-                        browser.horizontalScrollbar.update();
-                    });
+            });
 
+        };
+
+        browser.initializeWithSession = function (session) {
+
+            var tracks;
+
+            browser.sessionTeardown();
+
+            browser.cursorModel.regionWidth = session.regionWidth;
+            $("input[id='regionSizeInput']").val(browser.cursorModel.regionWidth);
+
+            tracks = [];
+            session.tracks.forEach(function(trackSession){
+
+                var track,
+                    config = {
+                        type: "bed",
+                        url: trackSession.path,
+                        color: trackSession.color,
+                        label: trackSession.label,
+                        order: trackSession.order,
+                        trackHeight: trackSession.height,
+                        trackFilter: trackSession.trackFilter,
+                        designatedTrack: trackSession.designatedTrack
+                    };
+
+                track = cursorTrackWithConfig(config, browser);
+                if (undefined !== track) {
+                    tracks.push(track);
                 }
+
+                if (config.designatedTrack && true === config.designatedTrack) {
+                    browser.designatedTrack = track;
+                }
+
+            });
+
+            if (0 === tracks.length) {
+                return;
+            }
+
+            if (undefined === browser.designatedTrack) {
+                browser.designatedTrack = tracks[ 0 ];
+            }
+
+            browser.getFeaturesForTracks(tracks, function () {
+
+                tracks.forEach(function (track) {
+                    browser.addTrack(track);
+                });
+
+                browser.designatedTrack.featureSource.allFeatures(function (features) {
+
+                    var horizontalScrollBarContainer = $("div.igv-horizontal-scrollbar-container-div");
+                    browser.horizontalScrollbar = new cursor.HorizontalScrollbar(browser, $(horizontalScrollBarContainer));
+
+                    browser.cursorModel.setRegions(features);
+
+                    browser.setFrameWidth(browser.trackViewportWidth() * session.framePixelWidthUnitless);
+
+                    browser.referenceFrame.bpPerPixel = 1.0 / browser.cursorModel.framePixelWidth;
+
+                    //browser.goto("", session.start, session.end);
+                    browser.fitToScreen();
+
+                    browser.horizontalScrollbar.update();
+
+                });
+
+            });
+
+        };
+
+        browser.session = function () {
+
+            var dev_null,
+                session =
+                {
+                    start: Math.floor(browser.referenceFrame.start),
+                    end: Math.floor((browser.referenceFrame.bpPerPixel * browser.trackViewportWidth()) + browser.referenceFrame.start),
+                    regionWidth: browser.cursorModel.regionWidth,
+                    framePixelWidthUnitless: (browser.cursorModel.framePixelWidth / browser.trackViewportWidth()),
+                    tracks: []
+                };
+
+            dev_null = browser.trackViewportWidth();
+
+            browser.trackViews.forEach(function (trackView) {
+
+                var jsonRepresentation = trackView.track.jsonRepresentation();
+
+                if (jsonRepresentation) {
+
+                    if (browser.designatedTrack && browser.designatedTrack === trackView.track) {
+                        jsonRepresentation.designatedTrack = true;
+                    }
+
+                    session.tracks.push(jsonRepresentation);
+                }
+                else {
+                    // TODO -- what if there is no json repesentation?
+                }
+            });
+
+            return JSON.stringify(session, undefined, 4);
+
+        };
+
+        browser.sessionTeardown = function () {
+
+            var trackView,
+                horizontalScrollBarContainer;
+
+            while (this.trackViews.length > 0) {
+                trackView = this.trackViews[ this.trackViews.length - 1 ];
+                this.removeTrack(trackView.track);
+            }
+
+            horizontalScrollBarContainer = $("div.igv-horizontal-scrollbar-container-div");
+            $(horizontalScrollBarContainer).empty();
+
+            this.horizontalScrollbar = undefined;
+
+        };
+        
+        browser.getFeaturesForTracks = function (tracks, continuation) {
+
+            var trackCount = tracks.length;
+
+            igv.startSpinnerAtParentElement(browser.div);
+
+            tracks.forEach(function (track) {
+
+                track.getFeatureCache(function(ignored){
+
+                    --trackCount;
+                    if (0 === trackCount) {
+
+                        igv.stopSpinnerAtParentElement(browser.div);
+
+                        // do stuff
+                        continuation();
+
+                    }
+
+                });
+
             });
 
         };
@@ -6206,174 +6363,6 @@ var igv = (function (igv) {
 
         };
 
-        // Alter "super" implementation
-        browser.loadTrack = function (config) {
-
-            if (browser.isDuplicateTrack(config)) {
-                return;
-            }
-
-            var path = config.url,
-                type = config.type,
-                newTrack;
-
-            if (!type) {
-                type = cursorGetType(path);
-            }
-
-            if (type !== "bed") {
-                window.alert("Bad Track type");
-                return;
-
-            }
-
-            newTrack = new cursor.CursorTrack(config, browser);
-
-            if (true === config.designatedTrack) {
-                browser.designatedTrack = newTrack;
-            }
-
-            browser.addTrack(newTrack);
-
-            function cursorGetType(path) {
-
-                if (path.endsWith(".bed") || path.endsWith(".bed.gz") || path.endsWith(".broadPeak") || path.endsWith(".broadPeak.gz")) {
-                    return "bed";
-                } else {
-                    return undefined;
-                }
-
-            }
-
-        };
-
-        browser.session = function () {
-
-            var dev_null,
-                session =
-                {
-                    start: Math.floor(browser.referenceFrame.start),
-                    end: Math.floor((browser.referenceFrame.bpPerPixel * browser.trackViewportWidth()) + browser.referenceFrame.start),
-                    regionWidth: browser.cursorModel.regionWidth,
-                    framePixelWidthUnitless: (browser.cursorModel.framePixelWidth / browser.trackViewportWidth()),
-                    tracks: []
-                };
-
-            dev_null = browser.trackViewportWidth();
-
-            browser.trackViews.forEach(function (trackView) {
-
-                var jsonRepresentation = trackView.track.jsonRepresentation();
-
-                if (jsonRepresentation) {
-
-                    if (browser.designatedTrack && browser.designatedTrack === trackView.track) {
-                        jsonRepresentation.designatedTrack = true;
-                    }
-
-                    session.tracks.push(jsonRepresentation);
-                }
-                else {
-                    // TODO -- what if there is no json repesentation?
-                }
-            });
-
-            return JSON.stringify(session, undefined, 4);
-
-        };
-
-        browser.sessionTeardown = function () {
-
-            var trackView,
-                horizontalScrollBarContainer;
-
-            while (this.trackViews.length > 0) {
-                trackView = this.trackViews[ this.trackViews.length - 1 ];
-                this.removeTrack(trackView.track);
-            }
-
-            horizontalScrollBarContainer = $("div.igv-horizontal-scrollbar-container-div");
-            $(horizontalScrollBarContainer).empty();
-
-            this.horizontalScrollbar = undefined;
-
-        };
-
-        browser.loadSession = function (session) {
-
-            var cursorTracks,
-                howmany,
-                horizontalScrollBarContainer;
-
-
-            browser.sessionTeardown();
-
-            browser.cursorModel.regionWidth = session.regionWidth;
-            $("input[id='regionSizeInput']").val(browser.cursorModel.regionWidth);
-
-            cursorTracks = [];
-            browser.designatedTrack = undefined;
-            session.tracks.forEach(function (trackSession) {
-
-                var cursorTrack,
-                    config = {
-                        type: "bed",
-                        url: trackSession.path,
-                        color: trackSession.color,
-                        label: trackSession.label,
-                        order: trackSession.order,
-                        trackHeight: trackSession.height,
-                        trackFilter: trackSession.trackFilter,
-                        designatedTrack: trackSession.designatedTrack
-                    };
-
-                cursorTrack = new cursor.CursorTrack(config, browser);
-                if (undefined !== config.designatedTrack && true === config.designatedTrack) {
-                    browser.designatedTrack = cursorTrack;
-                }
-
-                cursorTracks.push(cursorTrack);
-
-            });
-
-            if (undefined === browser.designatedTrack) {
-                browser.designatedTrack = cursorTracks[ 0 ];
-            }
-
-            howmany = 0;
-            cursorTracks.forEach(function (cursorTrack) {
-
-                browser.addTrack(cursorTrack);
-
-                if (++howmany === cursorTracks.length) {
-
-                    browser.selectDesignatedTrack(browser.designatedTrack.trackFilter.trackPanel);
-
-                    horizontalScrollBarContainer = $("div.igv-horizontal-scrollbar-container-div");
-                    browser.horizontalScrollbar = new cursor.HorizontalScrollbar(browser, $(horizontalScrollBarContainer));
-
-                    browser.designatedTrack.featureSource.allFeatures(function (featureList) {
-
-                        browser.cursorModel.setRegions(featureList);
-
-                        browser.setFrameWidth(browser.trackViewportWidth() * session.framePixelWidthUnitless);
-
-                        browser.referenceFrame.bpPerPixel = 1.0 / browser.cursorModel.framePixelWidth;
-
-                        //browser.goto("", session.start, session.end);
-                        browser.fitToScreen();
-
-
-                        browser.horizontalScrollbar.update();
-
-
-                    });
-                }
-
-            });
-
-        };
-
         function frameWidthNumberFormatter(frameWidth) {
 
             var divisor;
@@ -6391,6 +6380,47 @@ var igv = (function (igv) {
 
             return Math.round(frameWidth * divisor) / divisor;
         }
+
+        function cursorTrackWithConfig(config, browser){
+
+            var path,
+                type,
+                track;
+
+            if (browser.isDuplicateTrack(config)) {
+                return undefined;
+            }
+
+            path = config.url;
+            type = config.type;
+            if (!type) {
+                type = cursorGetType(path);
+            }
+
+            if (type !== "bed") {
+                window.alert("Bad Track type");
+                return undefined;
+            }
+
+            track = new cursor.CursorTrack(config, browser);
+
+            if (config.designatedTrack && true === config.designatedTrack) {
+                browser.designatedTrack = track;
+            }
+
+            function cursorGetType(path) {
+
+                if (path.endsWith(".bed") || path.endsWith(".bed.gz") || path.endsWith(".broadPeak") || path.endsWith(".broadPeak.gz")) {
+                    return "bed";
+                } else {
+                    return undefined;
+                }
+
+            }
+
+            return track;
+        }
+
     }
 
     function addCursorTrackViewExtensions(browser) {
@@ -6572,7 +6602,7 @@ var igv = (function (igv) {
                     }
 
 
-                    igv.startSpinnerObject(myself.trackDiv);
+                    //igv.startSpinnerObject(myself.trackDiv);
 
                     myself.currentTask = {
                         canceled: false,
@@ -6584,8 +6614,8 @@ var igv = (function (igv) {
                             if (this.xhrRequest) {
                                 this.xhrRequest.abort();
                             }
-//                    spinner.stop();
-                            igv.stopSpinnerObject(myself.trackDiv);
+
+                            //igv.stopSpinnerObject(myself.trackDiv);
                         }
 
                     };
@@ -6601,8 +6631,7 @@ var igv = (function (igv) {
 
                     myself.track.draw(ctx, referenceFrame, tileStart, tileEnd, buffer.width, buffer.height, function (task) {
 
-//                    spinner.stop();
-                            igv.stopSpinnerObject(myself.trackDiv);
+                            //igv.stopSpinnerObject(myself.trackDiv);
 
                             if (!(myself.currentTask && myself.currentTask.canceled)) {
                                 myself.tile = new Tile(referenceFrame.chr, tileStart, tileEnd, referenceFrame.bpPerPixel, buffer);
@@ -6619,7 +6648,7 @@ var igv = (function (igv) {
                         buffer2.width = this.controlCanvas.width;
                         buffer2.height = this.controlCanvas.height;
 
-                        var ctx2 =  buffer2.getContext('2d');;
+                        var ctx2 =  buffer2.getContext('2d');
 
                         myself.track.paintControl(ctx2, buffer2.width, buffer2.height);
 
@@ -8595,7 +8624,9 @@ var igv = (function (igv) {
      * A factory function.  Return a parser for the given file type.
      */
     igv.FeatureParser = function (type, decode) {
+
         this.type = type;
+        this.skipRows = 0;   // The number of fixed header rows to skip.  Override for specific types as needed
 
         if(decode) {
             this.decode = decode;
@@ -8612,9 +8643,13 @@ var igv = (function (igv) {
         else if (type === "aneu") {
             this.decode = decodeAneu;
         }
-        else if (type == 'FusionJuncSpan') {
+        else if (type === 'FusionJuncSpan') {
             // bhaas, needed for FusionInspector view
             this.decode = decodeFusionJuncSpan;
+        }
+        else if (type === 'gtexGWAS') {
+            this.skipRows = 1;
+            // KANE -- your decode function here
         }
         else {
             this.decode = decodeBed;
@@ -8664,7 +8699,7 @@ var igv = (function (igv) {
 
 
 
-        for (i = 0; i < len; i++) {
+        for (i = this.skipRows; i < len; i++) {
             line = lines[i];
             if (line.startsWith("track") || line.startsWith("#") || line.startsWith("browser")) {
                 continue;
@@ -8800,7 +8835,7 @@ var igv = (function (igv) {
         start = parseInt(tokens[1]);
         end = tokens.length > 2 ? parseInt(tokens[2]) : start + 1;
 
-        feature = {chr: chr, start: start, end: end};
+        feature = {chr: chr, start: start, end: end, score: 1000};
 
         if (tokens.length > 3) {
             // Note: these are very special rules for the gencode gene files.
@@ -10762,9 +10797,7 @@ var igv = (function (igv) {
         this.config = config;
         this.url = config.url;
         this.readGroupSetIds = config.readGroupSetIds;
-        this.authKey = config.authKey === undefined ?
-            'AIzaSyC-dujgw4P1QvNd8i_c-I-S_P1uxVZzn0w' :  // Default only works for localhost & broadinstitute.org
-            config.authKey;
+        this.authKey = config.authKey;   // Might be undefined or nill
     }
 
 
@@ -14059,7 +14092,6 @@ var igv = (function (igv) {
                             else {
 
                                 trackView.setTrackHeight( number );
-                                trackView.heightSetExplicitly = true;
                                 trackMenuPopupDialog.dialogForm.dialog("close");
                             }
 
@@ -14157,7 +14189,7 @@ var igv = (function (igv) {
 
         // spinner
         var spinner = document.createElement("i");
-        spinner.className = "fa fa-spinner fa-24px fa-spin igv-spinner-fa-start";
+        spinner.className = "fa fa-spinner fa-spin fa-24px igv-spinner-fa";
 
         return spinner;
     };
@@ -14165,21 +14197,26 @@ var igv = (function (igv) {
     /**
      * Find spinner
      */
-    igv.findSpinnerObject = function (parentElement) {
-
+    igv.getSpinnerObjectWithParentElement = function (parentElement) {
         return $(parentElement).find("i.fa-spinner");
+    };
+
+    /**
+     * Is spinner spinning ?
+     */
+    igv.isSpinning = function (spinnerObject) {
+        return spinnerObject && spinnerObject.hasClass("fa-spin");
     };
 
     /**
      * Start the spinner for the parent element, if it has one
      */
-    igv.startSpinnerObject = function (parentElement) {
+    igv.startSpinnerAtParentElement = function (parentElement) {
 
-        var spinnerObject = $(parentElement).find("i.fa-spinner");
+        var spinnerObject = igv.getSpinnerObjectWithParentElement(parentElement);
 
         if (spinnerObject) {
-            spinnerObject.removeClass("igv-spinner-fa-stop");
-            spinnerObject.addClass("igv-spinner-fa-start");
+            spinnerObject.show();
         }
 
     };
@@ -14188,13 +14225,12 @@ var igv = (function (igv) {
      * Stop the spinner for the parent element, if it has one
      * @param parentElement
      */
-    igv.stopSpinnerObject = function (parentElement) {
+    igv.stopSpinnerAtParentElement = function (parentElement) {
 
-        var spinner = $(parentElement).find("i.fa-spinner");
+        var spinnerObject = igv.getSpinnerObjectWithParentElement(parentElement);
 
-        if (spinner) {
-            spinner.removeClass("igv-spinner-fa-start");
-            spinner.addClass("igv-spinner-fa-stop");
+        if (spinnerObject) {
+            spinnerObject.hide();
         }
 
     };
@@ -18132,8 +18168,10 @@ var igv = (function (igv) {
             this.trackDiv.style.height = track.height + "px";
         }
 
-        // spinner
-        this.trackDiv.appendChild(igv.spinner());
+        // one spinner per track - IGV only
+        if ("CURSOR" !== browser.type) {
+            this.trackDiv.appendChild(igv.spinner());
+        }
 
         this.addLeftHandGutterToParentTrackDiv(this.trackDiv);
 
@@ -18311,12 +18349,11 @@ var igv = (function (igv) {
 
     igv.TrackView.prototype.setTrackHeight = function (newHeight, update) {
 
-        setTrackHeight_.call(this, newHeight, false);
+        setTrackHeight_.call(this, newHeight, update || true);
 
         this.track.autoHeight = false;   // Explicitly setting track height turns off auto-scale
 
     };
-
 
     /**
      * Set the content height of the track
@@ -18324,7 +18361,7 @@ var igv = (function (igv) {
      * @param newHeight
      * @param update
      */
-    igv.TrackView.prototype.setContentHeight = function (newHeight, update) {
+    igv.TrackView.prototype.setContentHeight = function (newHeight) {
 
         contentHeightStr = newHeight + "px";
 
@@ -18341,9 +18378,8 @@ var igv = (function (igv) {
             }
         }
 
-        if (update === undefined || update === true) this.update();
-    }
-
+        this.update();
+    };
 
     function setTrackHeight_ (newHeight, update) {
 
@@ -18351,7 +18387,7 @@ var igv = (function (igv) {
 
         trackHeightStr = newHeight + "px";
 
-        //this.track.height = newHeight;
+        this.track.height = newHeight;
 
         this.trackDiv.style.height = trackHeightStr;
 
@@ -18371,8 +18407,7 @@ var igv = (function (igv) {
 
         if (update === undefined || update === true) this.update();
 
-    };
-
+    }
 
     igv.TrackView.prototype.update = function () {
 
@@ -18431,7 +18466,7 @@ var igv = (function (igv) {
 
                 success = function (features) {
 
-                    igv.stopSpinnerObject(self.trackDiv);
+                    igv.stopSpinnerAtParentElement(self.trackDiv);
                     self.currentLoadTask = undefined;
 
                     if (features) {
@@ -18440,7 +18475,7 @@ var igv = (function (igv) {
                         if (self.track.computePixelHeight) {
                             var requiredHeight = self.track.computePixelHeight(features);
                             if (requiredHeight != self.contentDiv.clientHeight) {
-                                self.setContentHeight(requiredHeight, true);
+                                self.setContentHeight(requiredHeight);
                             }
                         }
 
@@ -18495,7 +18530,7 @@ var igv = (function (igv) {
                     }
                 };
 
-                igv.startSpinnerObject(self.trackDiv);
+                igv.startSpinnerAtParentElement(self.trackDiv);
 
                 this.track.getFeatures(referenceFrame.chr, bpStart, bpEnd, success, self.currentLoadTask);
             }

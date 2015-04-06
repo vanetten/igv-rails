@@ -5384,7 +5384,7 @@ var cursor = (function (cursor) {
                     Math.floor((regionNumber + 1 - start) * framePixelWidth - frameMargin / 2) :
                 pxStart + 1;
 
-                maxFeatureHeight = this.height;
+                maxFeatureHeight = height;
 
                 if (framePixelWidth > 2) {
 
@@ -5403,11 +5403,11 @@ var cursor = (function (cursor) {
                             if (score) {
                                 // Height proportional to score
                                 fh = Math.round(((score / this.max) * maxFeatureHeight));
-                                top = this.height - fh;
+                                top = height - fh;
                             }
                             else {
                                 top = 0;
-                                fh = this.height;
+                                fh = height;
                             }
                             if (score > this.max) {
                                 console.log(score);
@@ -5425,7 +5425,7 @@ var cursor = (function (cursor) {
                     if (score > 0) {
                         // Height proportional to score
                         fh = Math.round(((score / myself.max) * maxFeatureHeight));
-                        top = myself.height - fh;
+                        top = height - fh;
 
                         igv.Canvas.fillRect.call(ctx, pxStart, top, pw, fh);
                     }

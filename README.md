@@ -32,7 +32,7 @@ Require IGV (and dependencies) to the application's application.js:
 ```javascript
 //= require jquery
 //= require jquery-ui
-//= require igv-all
+//= require igv
 ```
 
 Require IGV CSS (and dependencies) to the application's application.css:

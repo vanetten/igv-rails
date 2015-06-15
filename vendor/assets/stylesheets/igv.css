@@ -1,23 +1,11 @@
 
-/* prevent unwanted translucent blue overlay when user selects anywhere in ENCODE table */
-div[id="igvEncodeModal"] {
-    -webkit-user-select: none;
-    -khtml-user-select: none;
-    -moz-user-select: none;
-    -o-user-select: none;
-    user-select: none;
-}
-
 [class*='igv-'], [class*='igv-']:after, [class*='igv-']:before {
     -webkit-box-sizing: border-box;
     -moz-box-sizing: border-box;
     box-sizing: border-box;
 }
 
-.igv-encode-spinner-container {
-    /*width: 256px;*/
-    /*margin: 0 auto 0 auto;*/
-}
+/* begin grid.css */
 
 .igv-grid-container-dialog {
 
@@ -667,6 +655,8 @@ div.ui-dialog fieldset {
     top: 0;
     left: 0;
 
+    min-width: 96px;
+
     z-index: 1000;
 
     font-family: 'PT Sans', sans-serif;
@@ -731,20 +721,9 @@ div.ui-dialog fieldset {
 }
 
 .igv-popoverTrackPopupContent {
-    position: relative;
-    top: 0;
-    left: 0;
-
-    width: 100%;
-    max-width: 100%;
-
+    overflow: auto;
+    max-width: 384px;
     max-height: 384px;
-
-    overflow-x: hidden;
-    overflow-y: auto;
-
-    margin-right: 24px;
-
 }
 
 .igv-popoverBorderTop {

@@ -132,30 +132,33 @@ var igv = (function (igv) {
                 if (type == 'A') {
                     value = String.fromCharCode(ba[p + 3]);
                     p += 4;
-                } else if (type == 'i' || type == 'I') {
+                } else if (type === 'i' || type === 'I') {
                     value = readInt(ba, p + 3);
                     p += 7;
-                } else if (type == 'c' || type == 'C') {
+                } else if (type === 'c' || type === 'C') {
                     value = ba[p + 3];
                     p += 4;
-                } else if (type == 's' || type == 'S') {
+                } else if (type === 's' || type === 'S') {
                     value = readShort(ba, p + 3);
                     p += 5;
-                } else if (type == 'f') {
-                    throw 'FIXME need floats';
-                } else if (type == 'Z') {
+                } else if (type === 'f') {
+                    // TODO 'FIXME need floats';
+                    value = 'floats not yet supported';
+                } else if (type === 'Z') {
                     p += 3;
                     value = '';
                     for (; ;) {
                         var cc = ba[p++];
-                        if (cc == 0) {
+                        if (cc === 0) {
                             break;
                         } else {
                             value += String.fromCharCode(cc);
                         }
                     }
                 } else {
-                    //    throw 'Unknown type ' + type;
+                    //'Unknown type ' + type;
+                    value = 'Error unknown type: ' + type;
+
                 }
                 tags[tag] = value;
             }
@@ -227,6 +230,24 @@ var igv = (function (igv) {
         function yesNo(bool) {
             return bool ? 'Yes' : 'No';
         }
+    }
+
+
+    function readInt(ba, offset) {
+        return (ba[offset + 3] << 24) | (ba[offset + 2] << 16) | (ba[offset + 1] << 8) | (ba[offset]);
+    }
+
+    function readShort(ba, offset) {
+        return (ba[offset + 1] << 8) | (ba[offset]);
+    }
+
+    function readFloat(ba, offset) {
+
+        var dataView = new DataView(new ArrayBuffer()),
+            littleEndian = true;
+
+        return dataView.getFloat32(offset, littleEndian);
+
     }
 
     return igv;
@@ -542,7 +563,7 @@ var igv = (function (igv) {
             mergedChunks;
 
         if (!ba) {
-            return null;
+            return [];
         }
         else {
 
@@ -683,8 +704,12 @@ var igv = (function (igv) {
     igv.BamReader = function (config) {
 
         this.config = config;
-        this.bamPath = config.url;
-        this.baiPath = config.indexURL || (this.bamPath + ".bai"); // Todo - deal with Picard convention.  WHY DOES THERE HAVE TO BE 2?
+        this.bamPath = 'gcs' === config.sourceType ?
+            igv.translateGoogleCloudURL(config.url) :
+            config.url;
+        this.baiPath = 'gcs' === config.sourceType ?
+            igv.translateGoogleCloudURL(config.url + ".bai") :
+            config.url + ".bai"; // Todo - deal with Picard convention.  WHY DOES THERE HAVE TO BE 2?
         this.headPath = config.headURL || this.bamPath;
 
     };
@@ -712,7 +737,6 @@ var igv = (function (igv) {
                         return;
                     }
                     if (chunks.length === 0) {
-                        console.log('No chunks for range ' + chrId + ":" + min + "-" + max);
                         continuation([]);
                         return;
                     }
@@ -777,6 +801,7 @@ var igv = (function (igv) {
             var blockSize,
                 blockEnd,
                 alignment,
+                blocks,
                 refID,
                 pos,
                 bmn,
@@ -915,7 +940,9 @@ var igv = (function (igv) {
 
                 if (!min || alignment.start <= max && alignment.start + alignment.lengthOnRef >= min) {
                     if (chrId === undefined || refID == chrId) {
-                        alignment.blocks = makeBlocks(alignment, cigarArray);
+                        blocks = makeBlocks(alignment, cigarArray);
+                        alignment.blocks = blocks.blocks;
+                        alignment.insertions = blocks.insertions;
                         alignments.push(alignment);
                     }
                 }
@@ -939,6 +966,7 @@ var igv = (function (igv) {
         function makeBlocks(record, cigarArray) {
 
             var blocks = [],
+                insertions,
                 seqOffset = 0,
                 pos = record.start,
                 len = cigarArray.length,
@@ -966,6 +994,10 @@ var igv = (function (igv) {
                         pos += c.len;
                         break;
                     case 'I' :
+                        blockSeq = record.seq === "*" ? "*" : record.seq.substr(seqOffset, c.len);
+                        blockQuals = record.qual ? record.qual.slice(seqOffset, c.len) : undefined;
+                        if(insertions === undefined) insertions = [];
+                        insertions.push({start: pos, len: c.len, seq: blockSeq, qual: blockQuals});
                         seqOffset += c.len;
                         break;
                     case 'M' :
@@ -974,13 +1006,9 @@ var igv = (function (igv) {
                     case 'X' :
 
                         blockSeq = record.seq === "*" ? "*" : record.seq.substr(seqOffset, c.len);
-
                         blockQuals = record.qual ? record.qual.slice(seqOffset, c.len) : undefined;
-
                         blocks.push({start: pos, len: c.len, seq: blockSeq, qual: blockQuals});
-
                         seqOffset += c.len;
-
                         pos += c.len;
 
                         break;
@@ -990,7 +1018,7 @@ var igv = (function (igv) {
                 }
             }
 
-            return blocks;
+            return {blocks: blocks, insertions: insertions};
 
         }
 
@@ -1099,7 +1127,7 @@ var igv = (function (igv) {
     function getIndex(bam, continuation) {
 
         var bamIndex = bam.index;
-        
+
         if (bam.index) {
             continuation(bam.index);
         }
@@ -1359,11 +1387,12 @@ var igv = (function (igv) {
         this.coverageTrackHeight = config.coverageTrackHeight || 50;
 
         this.defaultColor = config.defaultColor || "rgb(185, 185, 185)";
-        this.color = config.color || this.defaultColor;;
+        this.color = config.color || this.defaultColor;
         this.negStrandColor = config.negStrandColor || "rgba(150, 150, 230, 0.75)";
         this.posStrandColor = config.posStrandColor || "rgba(230, 150, 150, 0.75)";
         this.firstInfPairColor = "rgba(150, 150, 230, 0.75)";
         this.secondInPairColor = "rgba(230, 150, 150, 0.75)";
+        this.insertionColor = config.insertionColor || "rgb(138, 94, 161)";
 
         this.deletionColor = config.deletionColor || "black";
 
@@ -1377,25 +1406,25 @@ var igv = (function (igv) {
         this.alignmentShading = "none";
 
         // sort alignment rows
-        this.sortOption = config.sortOption || { sort : "NUCLEOTIDE" };
+        this.sortOption = config.sortOption || {sort: "NUCLEOTIDE"};
 
         // filter alignments
-        this.filterOption = config.filterOption || { name : "mappingQuality", params : [ 30, undefined ] };
+        this.filterOption = config.filterOption || {name: "mappingQuality", params: [30, undefined]};
 
         this.featureSource = new igv.BamSource(config);
     };
 
     igv.BAMTrack.alignmentShadingOptions = {
 
-        none : function (bamTrack, alignment) {
+        none: function (bamTrack, alignment) {
             return bamTrack.color;
         },
 
-        strand : function (bamTrack, alignment) {
+        strand: function (bamTrack, alignment) {
             return alignment.strand ? bamTrack.posStrandColor : bamTrack.negStrandColor;
         },
 
-        firstOfPairStrand : function (bamTrack, alignment) {
+        firstOfPairStrand: function (bamTrack, alignment) {
 
             if (alignment.isPaired()) {
 
@@ -1419,19 +1448,19 @@ var igv = (function (igv) {
 
     igv.BAMTrack.filters = {
 
-        noop : function () {
+        noop: function () {
             return function (alignment) {
                 return false;
             };
         },
 
-        strand : function (strand) {
+        strand: function (strand) {
             return function (alignment) {
                 return alignment.strand === strand;
             };
         },
 
-        mappingQuality : function (lower, upper) {
+        mappingQuality: function (lower, upper) {
             return function (alignment) {
 
                 if (lower && alignment.mq < lower) {
@@ -1453,18 +1482,18 @@ var igv = (function (igv) {
             b;
 
         if ("mappingQuality" === filterOption.name) {
-            a = bamTrack.filterOption[ "params" ][ 0 ];
-            b = bamTrack.filterOption[ "params" ][ 1 ];
-            return igv.BAMTrack.filters[ filterOption.name ](a, b);
+            a = bamTrack.filterOption["params"][0];
+            b = bamTrack.filterOption["params"][1];
+            return igv.BAMTrack.filters[filterOption.name](a, b);
         }
 
         if ("strand" === filterOption.name) {
-            a = bamTrack.filterOption[ "params" ][ 0 ];
-            return igv.BAMTrack.filters[ filterOption.name ](a);
+            a = bamTrack.filterOption["params"][0];
+            return igv.BAMTrack.filters[filterOption.name](a);
         }
 
         if ("noop" === filterOption.name) {
-            return igv.BAMTrack.filters[ filterOption.name ]();
+            return igv.BAMTrack.filters[filterOption.name]();
         }
 
         return undefined;
@@ -1487,8 +1516,8 @@ var igv = (function (igv) {
 
         this.featureSource.getFeatures(igv.browser.referenceFrame.chr, bpStart, bpEnd, function (genomicInterval) {
 
-            genomicInterval.packedAlignmentRows.forEach(function(alignmentRow){
-                alignmentRow.alignments.forEach(function(alignment){
+            genomicInterval.packedAlignmentRows.forEach(function (alignmentRow) {
+                alignmentRow.alignments.forEach(function (alignment) {
                     alignment.hidden = filter(alignment);
                 });
             });
@@ -1533,11 +1562,11 @@ var igv = (function (igv) {
             return;
         }
 
-        alignmentRows.forEach(function(alignmentRow){
+        alignmentRows.forEach(function (alignmentRow) {
             alignmentRow.updateScore(genomicLocation, genomicInterval, sortOption);
         });
 
-        alignmentRows.sort(function(a, b) {
+        alignmentRows.sort(function (a, b) {
             return a.score - b.score;
         });
 
@@ -1564,7 +1593,8 @@ var igv = (function (igv) {
 
     igv.BAMTrack.prototype.draw = function (options) {
 
-        var genomicInterval = options.features,
+        var self = this,
+            genomicInterval = options.features,
             ctx = options.context,
             bpPerPixel = options.bpPerPixel,
             bpStart = options.bpStart,
@@ -1573,13 +1603,16 @@ var igv = (function (igv) {
             skippedColor = this.skippedColor,
             deletionColor = this.deletionColor,
             bpEnd = bpStart + pixelWidth * bpPerPixel + 1,
-            myself = this,
-            zoomInNoticeFontStyle = { font: '16px PT Sans', fillStyle: "rgba(64, 64, 64, 1)", strokeStyle: "rgba(64, 64, 64, 1)" };
+            zoomInNoticeFontStyle = {
+                font: '16px PT Sans',
+                fillStyle: "rgba(64, 64, 64, 1)",
+                strokeStyle: "rgba(64, 64, 64, 1)"
+            };
 
         if (genomicInterval.exceedsVisibilityWindow) {
 
             for (var x = 200; x < pixelWidth; x += 400) {
-                igv.Canvas.fillText.call(ctx, "Zoom in to see alignments", x, 20, zoomInNoticeFontStyle);
+                igv.graphics.fillText(ctx, "Zoom in to see alignments", x, 20, zoomInNoticeFontStyle);
             }
 
             return;
@@ -1620,14 +1653,14 @@ var igv = (function (igv) {
                     item = coverageMap.coverage[i];
                     if (!item) continue;
 
-                    h = (item.total / coverageMap.maximum) * myself.coverageTrackHeight;
+                    h = (item.total / coverageMap.maximum) * self.coverageTrackHeight;
 
 
-                    y = myself.coverageTrackHeight - h;
+                    y = self.coverageTrackHeight - h;
                     x = Math.floor((bp - bpStart) / bpPerPixel);
 
-                    igv.Canvas.setProperties.call(ctx, {fillStyle: myself.color, strokeStyle: myself.color });
-                    igv.Canvas.fillRect.call(ctx, x, y, w, h);
+                    igv.graphics.setProperties(ctx, {fillStyle: self.color, strokeStyle: self.color});
+                    igv.graphics.fillRect(ctx, x, y, w, h);
 
                     // coverage mismatch coloring
                     if (sequence) {
@@ -1639,26 +1672,26 @@ var igv = (function (igv) {
                         refBase = sequence[i];
                         if (item.isMismatch(refBase)) {
 
-                            igv.Canvas.setProperties.call(ctx, { fillStyle: igv.nucleotideColors[ refBase ] });
-                            igv.Canvas.fillRect.call(ctx, x, y, w, h);
+                            igv.graphics.setProperties(ctx, {fillStyle: igv.nucleotideColors[refBase]});
+                            igv.graphics.fillRect(ctx, x, y, w, h);
 
                             accumulatedHeight = 0.0;
-                            [ "A", "C", "T", "G" ].forEach(function(nucleotide){
+                            ["A", "C", "T", "G"].forEach(function (nucleotide) {
 
                                 var count,
                                     hh;
 
-                                count = item[ "pos" + nucleotide] + item[ "neg" + nucleotide];
+                                count = item["pos" + nucleotide] + item["neg" + nucleotide];
 
 
                                 // non-logoritmic
-                                hh = (count / coverageMap.maximum) * myself.coverageTrackHeight;
+                                hh = (count / coverageMap.maximum) * self.coverageTrackHeight;
 
-                                y = (myself.coverageTrackHeight - hh) - accumulatedHeight;
+                                y = (self.coverageTrackHeight - hh) - accumulatedHeight;
                                 accumulatedHeight += hh;
 
-                                igv.Canvas.setProperties.call(ctx, { fillStyle: igv.nucleotideColors[ nucleotide ] });
-                                igv.Canvas.fillRect.call(ctx, x, y, w, hh);
+                                igv.graphics.setProperties(ctx, {fillStyle: igv.nucleotideColors[nucleotide]});
+                                igv.graphics.fillRect(ctx, x, y, w, hh);
 
                             });
 
@@ -1686,13 +1719,14 @@ var igv = (function (igv) {
                 // alignment track
                 packedAlignmentRows.forEach(function renderAlignmentRow(alignmentRow, i) {
 
-                    var widthArrowHead = myself.alignmentRowHeight / 2.0,
+                    var widthArrowHead = self.alignmentRowHeight / 2.0,
                         yStrokedLine,
                         yRect,
-                        height;
+                        height,
+                        outlineColor;
 
-                    yRect = myself.alignmentRowYInset + myself.coverageTrackHeight + (myself.alignmentRowHeight * i) + 5;
-                    height = myself.alignmentRowHeight - (2 * myself.alignmentRowYInset);
+                    yRect = self.alignmentRowYInset + self.coverageTrackHeight + (self.alignmentRowHeight * i) + 5;
+                    height = self.alignmentRowHeight - (2 * self.alignmentRowYInset);
                     yStrokedLine = (height / 2.0) + yRect;
 
                     alignmentRow.alignments.forEach(function renderAlignment(alignment, indexAlignment) {
@@ -1711,18 +1745,23 @@ var igv = (function (igv) {
                         xStart = (alignment.start - bpStart) / bpPerPixel;
                         xEnd = ((alignment.start + alignment.lengthOnRef) - bpStart) / bpPerPixel;
 
-                        canvasColor = igv.BAMTrack.alignmentShadingOptions[ myself.alignmentShading ](myself, alignment);
+                        canvasColor = igv.BAMTrack.alignmentShadingOptions[self.alignmentShading](self, alignment);
+                        outlineColor = canvasColor;
+
+                        if (alignment.mq <= 0) {
+                            canvasColor = igv.addAlphaToRGB(canvasColor, "0.15");
+                        }
 
                         if (alignment.blocks.length > 0) {
 
                             for (var c = 0; c < alignment.cigar.length; c++) {
 
-                                if      ("D" === alignment.cigar.charAt( c )) {
-                                    igv.Canvas.strokeLine.call(ctx, xStart, yStrokedLine, xEnd, yStrokedLine, {strokeStyle: deletionColor});
+                                if ("D" === alignment.cigar.charAt(c)) {
+                                    igv.graphics.strokeLine(ctx, xStart, yStrokedLine, xEnd, yStrokedLine, {strokeStyle: deletionColor});
                                     break;
                                 }
-                                else if ("N" === alignment.cigar.charAt( c )) {
-                                    igv.Canvas.strokeLine.call(ctx, xStart, yStrokedLine, xEnd, yStrokedLine, {strokeStyle: skippedColor});
+                                else if ("N" === alignment.cigar.charAt(c)) {
+                                    igv.graphics.strokeLine(ctx, xStart, yStrokedLine, xEnd, yStrokedLine, {strokeStyle: skippedColor});
                                     break;
                                 }
 
@@ -1730,7 +1769,7 @@ var igv = (function (igv) {
 
                         }
 
-                        igv.Canvas.setProperties.call(ctx, {   fillStyle: canvasColor , strokeStyle: canvasColor});
+                        igv.graphics.setProperties(ctx, {fillStyle: canvasColor, strokeStyle: canvasColor});
 
                         alignment.blocks.forEach(function (block, indexBlocks) {
                             var refOffset = block.start - bpStart,
@@ -1748,41 +1787,64 @@ var igv = (function (igv) {
                                 x,
                                 y;
 
-                            if      ( true === alignment.strand && indexBlocks === alignment.blocks.length - 1) {
-
-                                x = [
-                                    xEnd,
-                                    xEnd + widthArrowHead,
-                                    xEnd,
-                                    xEnd];
-
-                                y = [
-                                    yRect,
-                                    yRect + (height/2.0),
-                                    yRect + height,
-                                    yRect];
-
-                                igv.Canvas.fillPolygon.call(ctx, x, y, { fillStyle: canvasColor });
-                            }
-                            else if (false === alignment.strand && indexBlocks === 0) {
+                            if (true === alignment.strand && indexBlocks === alignment.blocks.length - 1) {
 
                                 x = [
                                     xBlockStart,
-                                    xBlockStart - widthArrowHead,
+                                    xEnd,
+                                    xEnd + widthArrowHead,
+                                    xEnd,
                                     xBlockStart,
                                     xBlockStart];
 
                                 y = [
                                     yRect,
-                                    yRect + (height/2.0),
+                                    yRect,
+                                    yRect + (height / 2.0),
+                                    yRect + height,
                                     yRect + height,
                                     yRect];
 
-                                igv.Canvas.fillPolygon.call(ctx, x, y, { fillStyle: canvasColor });
+                                igv.graphics.fillPolygon(ctx, x, y, {fillStyle: canvasColor});
+                                if (alignment.mq <= 0) {
+                                    igv.graphics.strokePolygon(ctx, x, y, {strokeStyle: outlineColor});
+                                }
+                            }
+                            else if (false === alignment.strand && indexBlocks === 0) {
+
+                                x = [
+                                    xEnd,
+                                    xBlockStart,
+                                    xBlockStart - widthArrowHead,
+                                    xBlockStart,
+                                    xEnd,
+                                    xEnd];
+
+                                y = [
+                                    yRect,
+                                    yRect,
+                                    yRect + (height / 2.0),
+                                    yRect + height,
+                                    yRect + height,
+                                    yRect];
+
+                                igv.graphics.fillPolygon(ctx, x, y, {fillStyle: canvasColor});
+                                if (alignment.mq <= 0) {
+                                    igv.graphics.strokePolygon(ctx, x, y, {strokeStyle: outlineColor});
+                                }
                             }
 
-                            igv.Canvas.fillRect.call(ctx, xBlockStart, yRect, widthBlock, height, { fillStyle: "white" });
-                            igv.Canvas.fillRect.call(ctx, xBlockStart, yRect, widthBlock, height, { fillStyle: canvasColor });
+                            else {
+                                igv.graphics.fillRect(ctx, xBlockStart, yRect, widthBlock, height, {fillStyle: "white"});
+                                igv.graphics.fillRect(ctx, xBlockStart, yRect, widthBlock, height, {fillStyle: canvasColor});
+
+                                if (alignment.mq <= 0) {
+                                    ctx.save();
+                                    ctx.strokeStyle = outlineColor;
+                                    ctx.strokeRect(xBlockStart, yRect, widthBlock, height);
+                                    ctx.restore();
+                                }
+                            }
 
                             // Only do mismatch coloring if a refseq exists to do the comparison
                             if (sequence && blockSeq !== "*") {
@@ -1797,7 +1859,7 @@ var igv = (function (igv) {
 
                                     if (readChar === "X" || refChar !== readChar) {
                                         if (block.qual && block.qual.length > i) {
-                                            readQual = block.qual[ i ];
+                                            readQual = block.qual[i];
                                             colorBase = shadedBaseColor(readQual, readChar, i + block.start);
                                         }
                                         else {
@@ -1808,13 +1870,26 @@ var igv = (function (igv) {
 
                                             xBase = ((block.start + i) - bpStart) / bpPerPixel;
                                             widthBase = Math.max(1, 1 / bpPerPixel);
-                                            igv.Canvas.fillRect.call(ctx, xBase, yRect, widthBase, height, { fillStyle: colorBase });
+                                            igv.graphics.fillRect(ctx, xBase, yRect, widthBase, height, {fillStyle: colorBase});
                                         }
                                     }
                                 }
                             }
 
                         });
+
+
+                        if (alignment.insertions) {
+                            alignment.insertions.forEach(function (block, indexBlocks) {
+                                var refOffset = block.start - bpStart,
+                                    xBlockStart = refOffset / bpPerPixel - 1,
+                                    widthBlock = 3;
+
+                                igv.graphics.fillRect(ctx, xBlockStart, yRect - 1, widthBlock, height + 2, {fillStyle: self.insertionColor});
+
+
+                            });
+                        }
                     });
                 });
             }
@@ -1838,7 +1913,7 @@ var igv = (function (igv) {
         if (packedAlignmentsIndex < 0) {
 
             coverageMapIndex = genomicLocation - coverageMap.bpStart;
-            coverage = coverageMap.coverage[ coverageMapIndex ];
+            coverage = coverageMap.coverage[coverageMapIndex];
 
             if (coverage) {
 
@@ -1879,13 +1954,13 @@ var igv = (function (igv) {
 
         else if (packedAlignmentsIndex < packedAlignmentRows.length) {
 
-            alignmentRow = packedAlignmentRows[ packedAlignmentsIndex ];
+            alignmentRow = packedAlignmentRows[packedAlignmentsIndex];
 
             alignment = undefined;
 
             for (var i = 0, len = alignmentRow.alignments.length, tmp; i < len; i++) {
 
-                tmp = alignmentRow.alignments[ i ];
+                tmp = alignmentRow.alignments[i];
 
                 if (tmp.start <= genomicLocation && (tmp.start + tmp.lengthOnRef >= genomicLocation)) {
                     alignment = tmp;
@@ -1909,21 +1984,21 @@ var igv = (function (igv) {
 
         var myself = this,
             menuItems = [],
-            lut = { "none": "Color: None", "strand": "Color: Read Strand" },
-            checkMark     = '<i class="fa fa-check fa-check-shim"></i>',
+            lut = {"none": "Color: None", "strand": "Color: Read Strand"},
+            checkMark = '<i class="fa fa-check fa-check-shim"></i>',
             checkMarkNone = '<i class="fa fa-check fa-check-shim fa-check-hidden"></i>',
             trackMenuItem = '<div class=\"igv-track-menu-item\">',
             trackMenuItemFirst = '<div class=\"igv-track-menu-item igv-track-menu-border-top\">';
 
         menuItems.push(igv.colorPickerMenuItem(popover, this.trackView));
 
-        [ "none", "strand"].forEach(function(alignmentShading, index){
+        ["none", "strand"].forEach(function (alignmentShading, index) {
 
             var chosen,
                 str;
 
             chosen = (0 === index) ? trackMenuItemFirst : trackMenuItem;
-            str = (alignmentShading === myself.alignmentShading) ? chosen + checkMark + lut[ alignmentShading ] + '</div>' : chosen + checkMarkNone + lut[ alignmentShading ] + '</div>';
+            str = (alignmentShading === myself.alignmentShading) ? chosen + checkMark + lut[alignmentShading] + '</div>' : chosen + checkMarkNone + lut[alignmentShading] + '</div>';
 
             menuItems.push({
                 object: $(str),
@@ -2253,14 +2328,14 @@ var igv = (function (igv) {
      */
     igv.BufferedReader.prototype.dataViewForRange = function (requestedRange, continutation, asUint8) {
 
-        var bufferedReader = this,
+        var self = this,
             hasData = (this.data && (this.range.start <= requestedRange.start) &&
             ((this.range.start + this.range.size) >= (requestedRange.start + requestedRange.size))),
             bufferSize,
             loadRange;
 
         if (hasData) {
-            subbuffer(bufferedReader, requestedRange, asUint8);
+            subbuffer(self, requestedRange, asUint8);
         }
         else {
             // Expand buffer size if needed, but not beyond content length
@@ -2273,16 +2348,16 @@ var igv = (function (igv) {
                 loadRange = {start: requestedRange.start, size: bufferSize};
             }
 
-            igvxhr.loadArrayBuffer(bufferedReader.path,
+            igvxhr.loadArrayBuffer(self.path,
                 {
                     headers: this.config.headers,
                     range: loadRange,
                     success: function (arrayBuffer) {
                         // TODO -- handle error
 
-                        bufferedReader.data = arrayBuffer;
-                        bufferedReader.range = loadRange;
-                        subbuffer(bufferedReader, requestedRange, asUint8);
+                        self.data = arrayBuffer;
+                        self.range = loadRange;
+                        subbuffer(self, requestedRange, asUint8);
                     }
                 });
 
@@ -2379,7 +2454,7 @@ var igv = (function (igv) {
 
             if (type == 1) {
                 for (i = 0; i < count; i++) {
-                    key = byteBuffer.getString(keySize);
+                    key = byteBuffer.getFixedLengthString(keySize).trim();
 
                     if(genome) key = genome.getChromosomeName(key);  // Translate to canonical chr name
 
@@ -2497,7 +2572,8 @@ var igv = (function (igv) {
                             endChrom: binaryParser.getInt(),
                             endBase: binaryParser.getInt(),
                             dataOffset: binaryParser.getLong(),
-                            dataSize: binaryParser.getLong()};
+                            dataSize: binaryParser.getLong()
+                        };
                         items[i] = item;
 
                     }
@@ -2512,7 +2588,8 @@ var igv = (function (igv) {
                             startBase: binaryParser.getInt(),
                             endChrom: binaryParser.getInt(),
                             endBase: binaryParser.getInt(),
-                            childOffset: binaryParser.getLong()};
+                            childOffset: binaryParser.getLong()
+                        };
                         items[i] = item;
 
                     }
@@ -2528,8 +2605,8 @@ var igv = (function (igv) {
 
         var rpTree = this,
             leafItems = [],
-            processing = new Set();
-        bufferedReader = new igv.BufferedReader(this.config, this.filesize, BUFFER_SIZE);
+            processing = new Set(),
+            bufferedReader = new igv.BufferedReader(this.config, this.filesize, BUFFER_SIZE);
 
         processing.add(0);  // Zero represents the root node
         findLeafItems(this.rootNode, 0);
@@ -2565,7 +2642,7 @@ var igv = (function (igv) {
 
             }
 
-            if(nodeId != undefined) processing.delete(nodeId);
+            if (nodeId != undefined) processing.delete(nodeId);
 
             // Wait until all nodes are processed
             if (processing.isEmpty()) {
@@ -2610,7 +2687,7 @@ var igv = (function (igv) {
 
         //  if (chrIdx > item.endChrom || chrIdx < item.startChrom) return false;
 
-        if(!item) {
+        if (!item) {
             console.log("null item");
             return false;
         }
@@ -2999,7 +3076,6 @@ var igv = (function (igv) {
                         chromStart = binaryParser.getInt();
                         chromEnd = binaryParser.getInt();
                         value = binaryParser.getFloat();
-                        chromEnd = chromStart + itemSpan;
                         break;
                     case 2:
 
@@ -3324,8 +3400,22 @@ var igv = (function (igv) {
             if (len && s.length == len) break;
         }
         return s;
-
     }
+
+    igv.BinaryParser.prototype.getFixedLengthString = function (len) {
+
+        var s = "";
+        var i;
+        var c;
+        for (i=0; i<len; i++) {
+            c = this.view.getUint8(this.position++);
+            if(c > 0) {
+                s += String.fromCharCode(c);
+            }
+        }
+        return s;
+    }
+
 
     igv.BinaryParser.prototype.getFloat = function () {
 
@@ -3430,7 +3520,10 @@ var igv = (function (igv) {
         addTrackContainerHandlers(trackContainer);
 
         this.trackViews = [];
-        this.nextTrackOrder = 0;
+
+        this.trackLabelsVisible = true;
+
+        this.featureDB = {};   // Hash of name -> feature, used for search function.
 
         window.onresize = igv.throttle(function () {
             igv.browser.resize();
@@ -3439,15 +3532,48 @@ var igv = (function (igv) {
     };
 
     function initialize(options) {
+        var genomeId;
+
         this.flanking = options.flanking;
         this.type = options.type || "IGV";
-        this.searchURL = options.searchURL || "//www.broadinstitute.org/webservices/igv/locus?genome=hg19&name=";
         this.crossDomainProxy = options.crossDomainProxy;
-
-
         this.formats = options.formats;
         this.trackDefaults = options.trackDefaults;
 
+        if (options.search) {
+            this.searchConfig = {
+                type: "json",
+                url: options.search.url,
+                coords: options.search.coords === undefined ? 1 : options.search.coords,
+                chromosomeField: options.search.chromosomeField || "chromosome",
+                startField: options.search.startField || "start",
+                endField: options.search.endField || "end",
+                resultsField: options.search.resultsField
+            }
+        }
+        else {
+
+            if (options.reference && options.reference.id) {
+                genomeId = options.reference.id;
+            }
+            else if (options.genome) {
+                genomeId = options.genome;
+            }
+            else {
+                genomeId = "hg19";
+            }
+
+            this.searchConfig = {
+                // Legacy support -- deprecated
+                type: "plain",
+                url: "//www.broadinstitute.org/webservices/igv/locus?genome=" + genomeId + "&name=$FEATURE$",
+                coords: 0,
+                chromosomeField: "chromosome",
+                startField: "start",
+                endField: "end"
+
+            }
+        }
     }
 
     igv.Browser.prototype.getFormat = function (name) {
@@ -3611,7 +3737,7 @@ var igv = (function (igv) {
         track.trackView = trackView;
 
         if (undefined === track.order) {
-            track.order = (this.nextTrackOrder)++;
+            track.order = this.trackViews.length;
         }
 
         this.trackViews.push(trackView);
@@ -3876,7 +4002,6 @@ var igv = (function (igv) {
         return this.referenceFrame.bpPerPixel * this.trackViewportWidth();
     };
 
-
     igv.Browser.prototype.removeAllTracks = function () {
         var tracks = this.trackViews;
 
@@ -3998,12 +4123,13 @@ var igv = (function (igv) {
         this.update();
     };
 
+
     igv.Browser.prototype.search = function (feature, continuation) {
 
         // See if we're ready to respond to a search, if not just queue it up and return
-        if(igv.browser === undefined || igv.browser.genome === undefined) {
+        if (igv.browser === undefined || igv.browser.genome === undefined) {
             igv.browser.initialLocus = feature;
-            if(continuation) continuation();
+            if (continuation) continuation();
             return;
         }
 
@@ -4013,11 +4139,11 @@ var igv = (function (igv) {
             posTokens,
             start,
             end,
-            source,
-            f,
+            searchConfig,
             tokens,
             url,
-            chromosome;
+            chromosome,
+            result;
 
         if (feature.contains(":") && feature.contains("-") || this.genome.getChromosome(feature)) {
 
@@ -4046,75 +4172,158 @@ var igv = (function (igv) {
         }
         else {
 
-            if (this.searchURL) {
-                url = this.searchURL + feature;
+            // Try local feature cache first
+            result = this.featureDB[feature.toUpperCase()];
+            if (result) {
+                handleSearchResult(result.name, result.chr, result.start, result.end, "");
+            }
+
+            else if (this.searchConfig) {
+                url = this.searchConfig.url.replace("$FEATURE$", feature);
+                searchConfig = this.searchConfig;
+
+                if (url.indexOf("$GENOME$") > -1) {
+                    var genomeId = this.genome.id ? this.genome.id : "hg19";
+                    url.replace("$GENOME$", genomeId);
+                }
+
                 igv.loadData(url, function (data) {
 
-                    var lines = data.splitLines(),
-                        len = lines.length,
-                        lineNo = 0,
-                        foundFeature = false,
-                        line, tokens, locusTokens, rangeTokens;
+                    var results = ("plain" === searchConfig.type) ? parseSearchResults(data) : JSON.parse(data);
 
-                    while (lineNo < len) {
-                        // EGFR	chr7:55,086,724-55,275,031	refseq
-                        line = lines[lineNo++];
-                        //console.log(line);
-                        tokens = line.split("\t");
-                        //console.log("tokens lenght = " + tokens.length);
-                        if (tokens.length >= 3) {
-                            f = tokens[0];
-                            if (f.toUpperCase() === feature.toUpperCase()) {
-
-                                source = tokens[2].trim();
-                                type = source;
-
-                                locusTokens = tokens[1].split(":");
-                                chr = igv.browser.genome.getChromosomeName(locusTokens[0].trim());
-
-                                if (igv.browser.type === "GTEX") {
-                                    igv.browser.selection = new igv.GtexSelection(type == 'gtex' ? {snp: feature} : {gene: feature});
-                                }
-
-                                rangeTokens = locusTokens[1].split("-");
-                                start = parseInt(rangeTokens[0].replace(/,/g, ''));
-                                end = parseInt(rangeTokens[1].replace(/,/g, ''));
-
-                                if (igv.browser.flanking) {
-                                    start -= igv.browser.flanking;
-                                    end += igv.browser.flanking;
-                                }
-
-
-                                igv.browser.goto(chr, start, end);
-
-                                foundFeature = true;
-                            }
-                        }
+                    if (searchConfig.resultsField) {
+                        results = results[searchConfig.resultsField];
                     }
 
-                    if (foundFeature) {
-                        fireOnsearch.call(igv.browser, feature, type);
-                    }
-                    else {
+                    if (results.length == 0) {
                         alert('No feature found with name "' + feature + '"');
                     }
+                    else if (results.length == 1) {
+
+                        // Just take the first result for now
+                        // TODO - merge results, or ask user to choose
+
+                        r = results[0];
+                        chr = r[searchConfig.chromosomeField];
+                        start = r[searchConfig.startField] - searchConfig.coords;
+                        end = r[searchConfig.endField];
+                        type = r["featureType"];
+                        handleSearchResult(feature, chr, start, end, chr, type);
+                    }
+                    else {
+                        presentSearchResults(results, searchConfig, feature);
+                    }
+
                     if (continuation) continuation();
                 });
             }
         }
 
-        function fireOnsearch(feature, type) {
-// Notify tracks (important for gtex).   TODO -- replace this with some sort of event model ?
-            this.trackViews.forEach(function (tp) {
-                var track = tp.track;
-                if (track.onsearch) {
-                    track.onsearch(feature, type);
-                }
-            });
-        }
 
     };
+
+    function presentSearchResults(loci, config, feature) {
+
+        igv.browser.$searchResultsTable.empty();
+        igv.browser.$searchResults.show();
+
+        loci.forEach(function (locus) {
+
+            var row = $('<tr class="igvNavigationSearchResultsTableRow">');
+            row.text(locus.locusString);
+
+            row.click(function () {
+
+                igv.browser.$searchResults.hide();
+
+                handleSearchResult(
+                    feature,
+                    locus[config.chromosomeField],
+                    locus[config.startField] - config.coords,
+                    locus[config.endField],
+                    locus["featureType"]);
+
+            });
+
+            igv.browser.$searchResultsTable.append(row);
+
+        });
+
+    }
+
+    /**
+     * Parse the igv line-oriented (non json) search results.
+     * Example
+     *    EGFR    chr7:55,086,724-55,275,031    refseq
+     *
+     * @param data
+     */
+    function parseSearchResults(data) {
+
+        var lines = data.splitLines(),
+            linesTrimmed = [],
+            results = [];
+
+        lines.forEach(function (item) {
+            if ("" === item) {
+                // do nothing
+            } else {
+                linesTrimmed.push(item);
+            }
+        });
+
+        linesTrimmed.forEach(function (line) {
+
+            var tokens = line.split("\t"),
+                source,
+                locusTokens,
+                rangeTokens;
+
+            if (tokens.length >= 3) {
+
+                locusTokens = tokens[1].split(":");
+                rangeTokens = locusTokens[1].split("-");
+                source = tokens[2].trim();
+
+                results.push({
+                    chromosome: igv.browser.genome.getChromosomeName(locusTokens[0].trim()),
+                    start: parseInt(rangeTokens[0].replace(/,/g, '')),
+                    end: parseInt(rangeTokens[1].replace(/,/g, '')),
+                    featureType: ("gtex" === source ? "snp" : "gene")
+                });
+
+            }
+
+        });
+
+        return results;
+
+    }
+
+    function handleSearchResult(name, chr, start, end, type) {
+
+        igv.browser.selection = new igv.GtexSelection('gtex' === type || 'snp' === type ? {snp: name} : {gene: name});
+
+        if (igv.browser.flanking) {
+            start -= igv.browser.flanking;
+            end += igv.browser.flanking;
+        }
+
+        igv.browser.goto(chr, start, end);
+
+        // Notify tracks (important for gtex).   TODO -- replace this with some sort of event model ?
+        fireOnsearch.call(igv.browser, name, type);
+    }
+
+    function fireOnsearch(feature, type) {
+        // Notify tracks (important for gtex).   TODO -- replace this with some sort of event model ?
+        this.trackViews.forEach(function (tp) {
+            var track = tp.track;
+            if (track.onsearch) {
+                track.onsearch(feature, type);
+            }
+        });
+    }
 
     function addTrackContainerHandlers(trackContainerDiv) {
 
@@ -4942,13 +5151,13 @@ var cursor = (function (cursor) {
         var renderMinimumOverlay = function (minimum) {
 
             var height = (minimum/track.max) * myself.bins.length;
-            igv.Canvas.fillRect.call(myself.ctx, 0, myself.bins.length - height, myself.canvasWidth, height, { fillStyle: myself.minMaxfillStyle });
+            igv.graphics.fillRect(myself.ctx, 0, myself.bins.length - height, myself.canvasWidth, height, { fillStyle: myself.minMaxfillStyle });
         };
 
         var renderMaximumOverlay = function (maximum) {
 
             var height = myself.bins.length - ((maximum/track.max) * myself.bins.length);
-            igv.Canvas.fillRect.call(myself.ctx, 0, 0, myself.canvasWidth, height, { fillStyle: myself.minMaxfillStyle });
+            igv.graphics.fillRect(myself.ctx, 0, 0, myself.canvasWidth, height, { fillStyle: myself.minMaxfillStyle });
         };
 
         // Clear canvas
@@ -4981,7 +5190,7 @@ var cursor = (function (cursor) {
 
                 color = (track.color) ? track.color : igv.rgbColor(128, 128, 128);
 
-                igv.Canvas.fillRect.call(myself.ctx, x, y, width, height, { fillStyle: color });
+                igv.graphics.fillRect(myself.ctx, x, y, width, height, { fillStyle: color });
             }
 
         }, this);
@@ -4992,7 +5201,7 @@ var cursor = (function (cursor) {
     };
 
     cursor.CursorHistogram.prototype.fillCanvasWithFillStyle = function (fillStyle) {
-        igv.Canvas.fillRect.call(this.ctx, this.canvasWidth, this.canvasHeight, { fillStyle:fillStyle } );
+        igv.graphics.fillRect(this.ctx, this.canvasWidth, this.canvasHeight, { fillStyle:fillStyle } );
     };
 
     function showX(count, index, counts) {
@@ -5000,7 +5209,7 @@ var cursor = (function (cursor) {
         var yPercent = index/(counts.length - 1),
             color = igv.rgbaColor(Math.floor(yPercent * 255), 0, 0, 0.75);
 
-        igv.Canvas.fillRect.call(this.ctx, index, 0, 1, counts.length, { fillStyle: color });
+        igv.graphics.fillRect(this.ctx, index, 0, 1, counts.length, { fillStyle: color });
 
     }
 
@@ -5009,7 +5218,7 @@ var cursor = (function (cursor) {
         var yPercent = index/(counts.length - 1),
             color = igv.rgbaColor(Math.floor(yPercent * 255), 0, 0, 0.75);
 
-        igv.Canvas.fillRect.call(this.ctx, 0, index, counts.length, 1, { fillStyle: color });
+        igv.graphics.fillRect(this.ctx, 0, index, counts.length, 1, { fillStyle: color });
 
     }
 
@@ -5844,10 +6053,10 @@ var cursor = (function (cursor) {
             sampleInterval = Math.max(1, Math.floor(1.0 / framePixelWidth));
 
             if (frameMargin > 0) {
-                igv.Canvas.fillRect.call(ctx, 0, 0, width, height, {fillStyle: 'rgb(255, 255, 255)'});
+                igv.graphics.fillRect(ctx, 0, 0, width, height, {fillStyle: 'rgb(255, 255, 255)'});
             }
 
-            igv.Canvas.setProperties.call(ctx, {fillStyle: this.color, strokeStyle: this.color});
+            igv.graphics.setProperties(ctx, {fillStyle: this.color, strokeStyle: this.color});
 
             for (regionNumber = Math.floor(start), len = regions.length;
                  regionNumber < len && regionNumber < end;
@@ -5900,7 +6109,7 @@ var cursor = (function (cursor) {
                     fh = height;
                 }
 
-                igv.Canvas.fillRect.call(ctx, pxStart, top, pw, fh);
+                igv.graphics.fillRect(ctx, pxStart, top, pw, fh);
 
 
             }
@@ -7089,6 +7298,201 @@ var igv = (function (igv) {
     return igv;
 
 })(igv || {});
+/*
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2014 Broad Institute
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
+/**
+ * Created by turner on 4/29/15.
+ */
+var igv = (function (igv) {
+
+    igv.DataRangeDialog = function (parentObject) {
+
+        var self = this;
+
+        this.container = $('<div class="igv-grid-container-dialog">');
+        parentObject.append( this.container[ 0 ] );
+
+        this.container.draggable();
+
+        this.header = $('<div class="igv-grid-header">');
+        this.headerBlurb = $('<div class="igv-grid-header-blurb">');
+
+        this.header.append(this.headerBlurb[ 0 ]);
+
+        igv.dialogCloseWithParentObject(this.header, function () {
+            self.hide();
+        });
+
+        this.container.append(this.header[ 0 ]);
+
+        self.container.append(doLayout()[ 0 ]);
+
+        self.container.append(doOKCancel()[ 0 ]);
+
+        function doOKCancel() {
+
+            var rowContainer,
+                row,
+                column,
+                columnFiller;
+
+            rowContainer = $('<div class="igv-grid-rect">');
+
+            row = $('<div class="igv-grid-dialog">');
+
+            // shim
+            column = $('<div class="igv-col igv-col-1-3">');
+            row.append( column[ 0 ] );
+
+            // cancel button
+            column = $('<div class="igv-col igv-col-1-3">');
+            columnFiller = $('<div class="igv-col-filler-cancel-button">');
+            columnFiller.text("Cancel");
+            columnFiller.click(function() { self.hide(); });
+            column.append( columnFiller[ 0 ] );
+            row.append( column[ 0 ] );
+
+            // ok button
+            column = $('<div class="igv-col igv-col-1-3">');
+            self.ok = $('<div class="igv-col-filler-cancel-button">');
+            self.ok.text("OK");
+            column.append( self.ok[ 0 ] );
+            row.append( column[ 0 ] );
+
+
+            rowContainer.append( row[ 0 ]);
+
+            return rowContainer;
+
+        }
+
+        function doLayout() {
+
+            var rowContainer,
+                row,
+                column,
+                columnFiller;
+
+            rowContainer = $('<div class="igv-grid-rect">');
+
+
+            // minimum
+            row = $('<div class="igv-grid-dialog">');
+
+            // vertical spacer
+            column = $('<div class="spacer10">');
+            row.append( column[ 0 ] );
+
+
+            column = $('<div class="igv-col igv-col-3-8">');
+            self.minLabel = $('<div class="igv-data-range-input-label">');
+            self.minLabel.text("Minimum");
+            column.append( self.minLabel[ 0 ] );
+            row.append( column[ 0 ] );
+
+            column = $('<div class="igv-col igv-col-3-8">');
+            self.minInput = $('<input class="igv-data-range-input" type="text" value="125">');
+            column.append( self.minInput[ 0 ] );
+            row.append( column[ 0 ] );
+
+            rowContainer.append( row[ 0 ]);
+
+            // maximum
+            row = $('<div class="igv-grid-dialog">');
+
+            column = $('<div class="igv-col igv-col-3-8">');
+            self.maxLabel = $('<div class="igv-data-range-input-label">');
+            self.maxLabel.text("Maximum");
+            column.append( self.maxLabel[ 0 ] );
+            row.append( column[ 0 ] );
+
+            column = $('<div class="igv-col igv-col-3-8">');
+            self.maxInput = $('<input class="igv-data-range-input" type="text" value="250">');
+            column.append( self.maxInput[ 0 ] );
+            row.append( column[ 0 ] );
+
+            rowContainer.append( row[ 0 ]);
+
+            // logaritmic
+            row = $('<div class="igv-grid-dialog">');
+
+            column = $('<div class="igv-col igv-col-3-8">');
+            columnFiller = $('<div class="igv-data-range-input-label">');
+            columnFiller.text("Log scale");
+            column.append( columnFiller[ 0 ] );
+            row.append( column[ 0 ] );
+
+            column = $('<div class="igv-col igv-col-3-8">');
+            self.logInput = $('<input class="igv-data-range-input" type="checkbox">');
+
+            // Disable until implemented in track
+            self.logInput[0].disabled = true;
+
+            column.append( self.logInput[ 0 ] );
+            row.append( column[ 0 ] );
+
+
+            rowContainer.append( row[ 0 ]);
+
+            return rowContainer;
+
+        }
+
+    };
+
+    igv.DataRangeDialog.prototype.hide = function () {
+        $(this.container).offset( { left: 0, top: 0 } );
+        this.container.hide();
+    };
+
+    igv.DataRangeDialog.prototype.show = function () {
+
+        var body_scrolltop = $("body").scrollTop(),
+            track_scrolltop = $(this.trackView.trackDiv).scrollTop(),
+            track_origin = $(this.trackView.trackDiv).offset(),
+            track_size = { width: $(this.trackView.trackDiv).outerWidth(), height: $(this.trackView.trackDiv).outerHeight()},
+            size = { width: $(this.container).outerWidth(), height: $(this.container).outerHeight()};
+
+        //console.log("scrollTop. body " + body_scrolltop + " track " + track_scrolltop);
+
+        // centered left-right
+        //$(this.container).offset( { left: (track_size.width - size.width)/2, top: track_origin.top } );
+
+        this.container.show();
+
+        $(this.container).offset( { left: (track_size.width - 300), top: (track_origin.top + body_scrolltop) } );
+
+        $(this.container).offset( igv.constrainBBox($(this.container), $(igv.browser.trackContainerDiv)) );
+
+    };
+
+    return igv;
+
+})(igv || {});
+
 /*
  * The MIT License (MIT)
  *
@@ -8603,7 +9007,7 @@ var igv = (function (igv) {
             'strokeStyle': "black"
         };
 
-        igv.Canvas.fillRect.call(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': "rgb(255, 255, 255)"});
+        igv.graphics.fillRect(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': "rgb(255, 255, 255)"});
 
         function computeH(min, max, value, maxpixels) {
             return maxpixels - Math.round((value - min) / max * maxpixels);
@@ -8614,28 +9018,42 @@ var igv = (function (igv) {
         var min = 0;
         var x = 49;
 
-        igv.Canvas.strokeLine.call(ctx, x, computeH(min, max, 0, track.maxheight), x, computeH(min, max, max, track.maxheight), font); // Offset
+        igv.graphics.strokeLine(ctx, x, computeH(min, max, 0, track.maxheight), x, computeH(min, max, max, track.maxheight), font); // Offset
 
         x = x - 5;
         for (var p = 0; p <= max; p += 1) {
             var h = computeH(min, max, p, track.maxheight);
-            igv.Canvas.strokeLine.call(ctx, x, h, x + 5, h, font); // Offset dashes up by 2							// pixel
-            if (p > 0 && p < max) igv.Canvas.fillText.call(ctx, p, x - 4, h + 3, font); // Offset
+            igv.graphics.strokeLine(ctx, x, h, x + 5, h, font); // Offset dashes up by 2							// pixel
+            if (p > 0 && p < max) igv.graphics.fillText(ctx, p, x - 4, h + 3, font); // Offset
         }
 
         font['textAlign'] = 'center';
-        igv.Canvas.fillText.call(ctx, "ploidy", x - 15, pixelHeight / 2, font, {rotate: {angle: -90}});
+        igv.graphics.fillText(ctx, "ploidy", x - 15, pixelHeight / 2, font, {rotate: {angle: -90}});
 
 
     };
 
     igv.AneuTrack.prototype.draw = function (options) {
 
-        var myself = this, featureList, canvas, bpPerPixel, bpStart, pixelWidth, pixelHeight, bpEnd, segment, len, sample, i, y, color, value, px, px1, pw, xScale;
+        var myself = this,
+            ctx,
+            bpPerPixel,
+            bpStart,
+            pixelWidth,
+            pixelHeight,
+            bpEnd,
+            segment,
+            len,
+            sample,
+            i,
+            y,
+            color,
+            value,
+            px,
+            px1,
+            pw,
+            xScale;
 
-        // console.log("Draw called. redline="+this.redlindata);
-
-        canvas = options.context;
         ctx = options.context;
         pixelWidth = options.pixelWidth;
         pixelHeight = options.pixelHeight;
@@ -8645,7 +9063,7 @@ var igv = (function (igv) {
 
         var PLOIDYMAX = 10;
         // deubugging
-        igv.Canvas.fillRect.call(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': "rgb(255, 255, 255)"});
+        igv.graphics.fillRect(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': "rgb(255, 255, 255)"});
 
         var track = this;
         window.track = track;
@@ -8732,7 +9150,7 @@ var igv = (function (igv) {
                         log("       Got value " + value + ", h=" + h + ", y+h=" + (y + h) + ", px=" + px
                         + ", px1=" + px1 + ", pw=" + pw + ", color=" + color + ", maxh=" + maxheight);
                     // use different plot types
-                    igv.Canvas.fillRect.call(ctx, px, y + h, pw, 2, {
+                    igv.graphics.fillRect(ctx, px, y + h, pw, 2, {
                         fillStyle: color
                     });
                 }
@@ -8759,9 +9177,9 @@ var igv = (function (igv) {
 
             var mid = computeH(min, max, 2.0, maxheight);
             console.log("drawing dashed line and solid line at " + mid + " to " + pixelWidth);
-            igv.Canvas.dashedLine.call(ctx, 20, mid, pixelWidth, mid, 4, font);
+            igv.graphics.dashedLine(ctx, 20, mid, pixelWidth, mid, 4, font);
             var zero = computeH(min, max, 0, maxheight);
-            igv.Canvas.strokeLine.call(ctx, 20, zero, pixelWidth, zero, font);
+            igv.graphics.strokeLine(ctx, 20, zero, pixelWidth, zero, font);
         }
         else log("NOT drawing line at 2");
         if (options.features) {
@@ -9490,29 +9908,37 @@ var igv = (function (igv) {
             case "broadPeak":
             case "peaks":
                 this.decode = decodePeak;
+                this.delimiter = /\s+/;
                 break;
             case "bedgraph":
                 this.decode = decodeBedGraph;
+                this.delimiter = /\s+/;
                 break;
             case "wig":
                 this.decode = decodeWig;
+                this.delimiter = /\s+/;
                 break;
             case "gff" :
                 this.decode = decodeGFF;
+                this.delimiter = "\t";
                 break;
             case "aneu":
                 this.decode = decodeAneu;
+                this.delimiter = "\t";
                 break;
             case "FusionJuncSpan":
                 // bhaas, needed for FusionInspector view
                 this.decode = decodeFusionJuncSpan;
+                this.delimiter = /\s+/;
                 break;
             case "gtexGWAS":
                 this.skipRows = 1;
                 this.decode = decodeGtexGWAS;
+                this.delimiter = "\t";
                 break;
             case "refflat":
                 this.decode = decodeRefflat;
+                this.delimiter = "\t";
                 break;
             default:
 
@@ -9720,7 +10146,8 @@ var igv = (function (igv) {
             feature.cdEnd = parseInt(tokens[7]);
         }
         if (tokens.length > 8) {
-            feature.rgb = tokens[8];
+            if(tokens[8] !== "." && tokens[8] !== "0")
+            feature.rgb = "rgb(" + tokens[8] + ")";
         }
         if (tokens.length > 11) {
             exonCount = parseInt(tokens[9]);
@@ -9738,7 +10165,10 @@ var igv = (function (igv) {
         }
 
         feature.popupData = function () {
-            return [{name: "Name", value: feature.name}];
+            var data = [];
+            if(feature.name) data.push({name: "Name", value: feature.name});
+            if("+" === feature.strand || "-" === feature.strand) data.push({name: "Strand", value: feature.strand});
+            return data;
         };
 
         return feature;
@@ -10092,7 +10522,7 @@ var igv = (function (igv) {
 /*
  * The MIT License (MIT)
  *
- * Copyright (c) 2014 Broad Institute
+ * Copyright (c) 2014-2015 Broad Institute
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -10152,13 +10582,22 @@ var igv = (function (igv) {
 
     igv.FeatureSource.prototype.getHeader = function (continuation) {
 
-        var self = this;
+        var self = this,
+            maxRows = this.config.maxRows || 500;
+
 
         if (this.reader.readHeader) {
             this.reader.readHeader(function (header, features) {
                 // Non-indexed readers will return features as a side effect.  This is an important performance hack
                 if (features) {
+                    // Assign overlapping features to rows
+                    packFeatures(features, maxRows);
                     self.featureCache = new igv.FeatureCache(features);
+
+                    // If track is marked "searchable"< cache features by name -- use this with caution, memory intensive
+                    if (self.config.searchable) {
+                        addFeaturesToDB(features);
+                    }
                 }
                 continuation(header);
             });
@@ -10166,6 +10605,14 @@ var igv = (function (igv) {
         else {
             continuation(null);
         }
+    }
+
+    function addFeaturesToDB(featureList) {
+        featureList.forEach(function (feature) {
+            if (feature.name) {
+                igv.browser.featureDB[feature.name.toUpperCase()] = feature;
+            }
+        })
     }
 
     /**
@@ -10182,7 +10629,7 @@ var igv = (function (igv) {
     igv.FeatureSource.prototype.getFeatures = function (chr, bpStart, bpEnd, success, task) {
 
 
-        var myself = this,
+        var self = this,
             genomicInterval = new igv.GenomicInterval(chr, bpStart, bpEnd),
             featureCache = this.featureCache,
             maxRows = this.config.maxRows || 500;
@@ -10196,21 +10643,27 @@ var igv = (function (igv) {
             this.reader.readFeatures(function (featureList) {
 
                 function isIndexed() {
-                    return myself.reader.indexed ||
-                        myself.config.sourceType === "ga4gh" ||
-                        myself.config.sourceType === "immvar" ||
-                        myself.config.sourceType === "gtex";
+                    return self.reader.indexed ||
+                        self.config.sourceType === "ga4gh" ||
+                        self.config.sourceType === "immvar" ||
+                        self.config.sourceType === "gtex";
                 }
 
-                myself.featureCache = isIndexed() ?
+                self.featureCache = isIndexed() ?
                     new igv.FeatureCache(featureList, genomicInterval) :
                     new igv.FeatureCache(featureList);   // Note - replacing previous cache with new one
+
+
+                // If track is marked "searchable"< cache features by name -- use this with caution, memory intensive
+                if (self.config.searchable) {
+                    addFeaturesToDB(featureList);
+                }
 
                 // Assign overlapping features to rows
                 packFeatures(featureList, maxRows);
 
                 // Finally pass features for query interval to continuation
-                success(myself.featureCache.queryFeatures(chr, bpStart, bpEnd));
+                success(self.featureCache.queryFeatures(chr, bpStart, bpEnd));
 
             }, task, genomicInterval);   // Currently loading at granularity of chromosome
         }
@@ -10356,7 +10809,7 @@ var igv = (function (igv) {
         this.expandedRowHeight = config.expandedRowHeight || 30;
         this.squishedRowHeight = config.squishedRowHeight || 15;
 
-        this.featureHeight = config.featureHeight || 10;
+        this.featureHeight = config.featureHeight || 14;
         this.featureSource = new igv.FeatureSource(this.config);
 
         // Set the render function.  This can optionally be passed in the config
@@ -10374,6 +10827,8 @@ var igv = (function (igv) {
         }
         else {
             this.render = renderFeature;
+            this.arrowSpacing = 30;
+
         }
 
     };
@@ -10451,12 +10906,12 @@ var igv = (function (igv) {
             };
 
 
-        igv.Canvas.fillRect.call(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': "rgb(255, 255, 255)"});
+        igv.graphics.fillRect(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': "rgb(255, 255, 255)"});
 
         if (options.features.exceedsVisibilityWindow) {
 
             for (var x = 200; x < pixelWidth; x += 400) {
-                igv.Canvas.fillText.call(ctx, "Zoom in to see features", x, 20, zoomInNoticeFontStyle);
+                igv.graphics.fillText(ctx, "Zoom in to see features", x, 20, zoomInNoticeFontStyle);
             }
             return;
         }
@@ -10558,8 +11013,9 @@ var igv = (function (igv) {
             trackMenuItemFirst = '<div class=\"igv-track-menu-item igv-track-menu-border-top\">';
 
         menuItems.push(igv.colorPickerMenuItem(popover, this.trackView));
+        menuItems.push(igv.dataRangeMenuItem(popover, this.trackView));
 
-        ["COLLAPSED", "SQUISHED", "EXPANDED"].forEach(function (displayMode, index) {
+            ["COLLAPSED", "SQUISHED", "EXPANDED"].forEach(function (displayMode, index) {
 
             var chosen,
                 str;
@@ -10596,6 +11052,8 @@ var igv = (function (igv) {
         var px,
             px1,
             pw,
+            x,
+            e,
             exonCount,
             cy,
             direction,
@@ -10604,8 +11062,8 @@ var igv = (function (igv) {
             ePx1,
             ePw,
             py = 5,
-            step = 8,
-            h = this.featureHeight,
+            step = this.arrowSpacing,
+            h =  this.featureHeight,
             transform,
             fontStyle,
             color = this.color;
@@ -10617,6 +11075,11 @@ var igv = (function (igv) {
                 color = this.config.colorBy.pallete[colorByValue];
             }
         }
+        else if(feature.rgb) {
+            color = feature.rgb;
+        }
+
+
         ctx.fillStyle = color;
         ctx.strokeStyle = color;
 
@@ -10629,6 +11092,7 @@ var igv = (function (igv) {
         }
 
         if (this.displayMode === "SQUISHED" && feature.row != undefined) {
+            h /= 2;
             py = this.squishedRowHeight * feature.row;
         }
         else if (this.displayMode === "EXPANDED" && feature.row != undefined) {
@@ -10644,21 +11108,37 @@ var igv = (function (igv) {
         }
         else {
             // multi-exon transcript
-            cy = py + 5;
-            igv.Canvas.strokeLine.call(ctx, px, cy, px1, cy); // center line for introns
+            cy = py + h/2;
+
+            igv.graphics.strokeLine(ctx, px+1, cy, px1-1, cy); // center line for introns
+
             direction = feature.strand == '+' ? 1 : -1;
-            for (var x = px + step / 2; x < px1; x += step) {
+            for (x = px + step / 2; x < px1; x += step) {
                 // draw arrowheads along central line indicating transcribed orientation
-                igv.Canvas.strokeLine.call(ctx, x - direction * 2, cy - 2, x, cy);
-                igv.Canvas.strokeLine.call(ctx, x - direction * 2, cy + 2, x, cy);
+                igv.graphics.strokeLine(ctx, x - direction * 2, cy - 2, x, cy);
+                igv.graphics.strokeLine(ctx, x - direction * 2, cy + 2, x, cy);
             }
-            for (var e = 0; e < exonCount; e++) {
+            for (e = 0; e < exonCount; e++) {
                 // draw the exons
                 exon = feature.exons[e];
                 ePx = Math.round((exon.start - bpStart) / xScale);
                 ePx1 = Math.round((exon.end - bpStart) / xScale);
                 ePw = Math.max(1, ePx1 - ePx);
                 ctx.fillRect(ePx, py, ePw, h);
+
+                // Arrows
+                if(ePw > step + 5) {
+                    ctx.fillStyle = "white";
+                    ctx.strokeStyle = "white";
+                    for (x = ePx + step / 2; x < ePx1; x += step) {
+                        // draw arrowheads along central line indicating transcribed orientation
+                        igv.graphics.strokeLine(ctx, x - direction * 2, cy - 2, x, cy);
+                        igv.graphics.strokeLine(ctx, x - direction * 2, cy + 2, x, cy);
+                    }
+                    ctx.fillStyle = color;
+                    ctx.strokeStyle = color;
+
+                }
 
             }
         }
@@ -10693,7 +11173,7 @@ var igv = (function (igv) {
             }
 
             var labelY = transform ? py + 20 : py + 25;
-            igv.Canvas.fillText.call(ctx, feature.name, px + ((px1 - px) / 2), labelY, geneFontStyle, transform);
+            igv.graphics.fillText(ctx, feature.name, px + ((px1 - px) / 2), labelY, geneFontStyle, transform);
         }
     }
 
@@ -11060,7 +11540,7 @@ var igv = (function (igv) {
         ctx = options.context;
         pixelWidth = options.pixelWidth;
         pixelHeight = options.pixelHeight;
-        igv.Canvas.fillRect.call(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': "rgb(255, 255, 255)"});
+        igv.graphics.fillRect(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': "rgb(255, 255, 255)"});
 
         featureList = options.features;
         if (featureList) {
@@ -11109,7 +11589,7 @@ var igv = (function (igv) {
                 px1 = Math.round((segment.end - bpStart) / xScale);
                 pw = Math.max(1, px1 - px);
 
-                igv.Canvas.fillRect.call(ctx, px, y, pw, sampleHeight, {fillStyle: color});
+                igv.graphics.fillRect(ctx, px, y, pw, sampleHeight, {fillStyle: color});
 
             }
         }
@@ -11701,77 +12181,6 @@ var igv = (function (igv) {
     }
 
 
-    /**
-     * Split the alignment record into blocks as specified in the cigarArray.  Each aligned block contains
-     * its portion of the read sequence and base quality strings.  A read sequence or base quality string
-     * of "*" indicates the value is not recorded.  In all other cases the length of the block sequence (block.seq)
-     * and quality string (block.qual) must == the block length.
-     *
-     * NOTE: Insertions are not yet treated // TODO
-     *
-     * @param record
-     * @param cigarArray
-     * @returns array of blocks
-     */
-    function makeBlocks(record, cigarArray) {
-
-
-        var blocks = [],
-            seqOffset = 0,
-            pos = record.start,
-            len = cigarArray.length,
-            blockSeq,
-            blockQuals;
-
-        for (var i = 0; i < len; i++) {
-
-            var c = cigarArray[i];
-
-            switch (c.ltr) {
-                case 'H' :
-                    break; // ignore hard clips
-                case 'P' :
-                    break; // ignore pads
-                case 'S' :
-                    seqOffset += c.len;
-                    break; // soft clip read bases
-                case 'N' :
-                    pos += c.len;
-                    break;  // reference skip
-                case 'D' :
-                    pos += c.len;
-                    break;
-                case 'I' :
-                    seqOffset += c.len;
-                    break;
-                case 'M' :
-                case 'EQ' :
-                case '=' :
-                case 'X' :
-                    blockSeq = record.seq === "*" ? "*" : record.seq.substr(seqOffset, c.len);
-                    blockQuals = record.qual === "*" ? "*" : record.qual.slice(seqOffset, c.len);
-                    blocks.push({start: pos, len: c.len, seq: blockSeq, qual: blockQuals});
-                    seqOffset += c.len;
-                    pos += c.len;
-                    break;
-                default :
-                    console.log("Error processing cigar element: " + c.len + c.ltr);
-            }
-        }
-
-        return blocks;
-
-    }
-
-
-    function encodeCigar(cigarArray) {
-        return "";
-    }
-
-    function encodeFlags(json) {
-        return 0;
-    }
-
 
     function translateCigar(cigar) {
 
@@ -11973,9 +12382,8 @@ var igv = (function (igv) {
 
                         console.log("No reference set specified");
 
-                        if(referenceSetId) {
+                        if (referenceSetId) {
 
-                            consosle.log("referenceSetId=" + referenceSetId);
                             // Query for reference names to build an alias table (map of genome ref names -> dataset ref names)
                             var readURL = self.url + "/references/search";
 
@@ -11991,7 +12399,6 @@ var igv = (function (igv) {
                                     references.forEach(function (ref) {
                                         var refName = ref.name,
                                             alias = igv.browser.genome.getChromosomeName(refName);
-                                        console.log(refName + "  " + alias);
                                         self.chrNameMap[alias] = refName;
                                     });
                                     continuation(self.chrNameMap);
@@ -12090,7 +12497,10 @@ var igv = (function (igv) {
 
                 read.lengthOnRef = cigarDecoded.lengthOnRef;
 
-                read.blocks = makeBlocks(read, cigarDecoded.array);
+                blocks = makeBlocks(read, cigarDecoded.array);
+                read.blocks = blocks.blocks;
+                read.insertions = blocks.insertions;
+
             }
             else {
                 read.mapped = false;
@@ -12163,6 +12573,7 @@ var igv = (function (igv) {
 
 
         var blocks = [],
+            insertions,
             seqOffset = 0,
             pos = record.start,
             len = cigarArray.length,
@@ -12188,6 +12599,10 @@ var igv = (function (igv) {
                     pos += c.len;
                     break;
                 case 'I' :
+                    blockSeq = record.seq === "*" ? "*" : record.seq.substr(seqOffset, c.len);
+                    blockQuals = record.qual === "*" ? "*" : record.qual.slice(seqOffset, c.len);
+                    if (insertions === undefined) insertions = [];
+                    insertions.push({start: pos, len: c.len, seq: blockSeq, qual: blockQuals, insertion: true});
                     seqOffset += c.len;
                     break;
                 case 'M' :
@@ -12205,7 +12620,7 @@ var igv = (function (igv) {
             }
         }
 
-        return blocks;
+        return {blocks: blocks, insertions: insertions};
 
     }
 
@@ -12235,8 +12650,8 @@ var igv = (function (igv) {
      */
     function populateChrNameMap(chrNameMap, datasetId) {
         var i;
-        if("461916304629" === datasetId || "337315832689" === datasetId) {
-            for(i=1; i<23; i++) {
+        if ("461916304629" === datasetId || "337315832689" === datasetId) {
+            for (i = 1; i < 23; i++) {
                 chrNameMap["chr" + i] = i;
             }
             chrNameMap["chrX"] = "X";
@@ -12670,6 +13085,55 @@ var igv = (function (igv) {
 /*
  * The MIT License (MIT)
  *
+ * Copyright (c) 2014-2015 Broad Institute
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
+var igv = (function (igv) {
+
+
+    igv.translateGoogleCloudURL = function(gsUrl) {
+
+        var i = gsUrl.indexOf('/', 5);
+        if (i < 0) {
+            console.log("Invalid gs url: " + gsUrl);
+            return gsUrl;
+        }
+
+        var bucket = gsUrl.substring(5, i);
+        var object = encodeURIComponent(gsUrl.substring(i + 1));
+
+        return "https://www.googleapis.com/storage/v1/b/" + bucket + "/o/" + object + "?alt=media";
+
+    }
+
+
+    return igv;
+
+})(igv || {});
+
+
+/*
+ * The MIT License (MIT)
+ *
  * Copyright (c) 2014 Broad Institute
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -12988,20 +13452,20 @@ var igv = (function (igv) {
             'strokeStyle': "black"
         };
 
-        igv.Canvas.fillRect.call(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': "rgb(255, 255, 255)"});
+        igv.graphics.fillRect(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': "rgb(255, 255, 255)"});
 
         for (var p = 4; p <= track.maxLogP; p += 2) {
             var yp = pixelHeight - Math.round((p - track.minLogP) / yScale);
             // TODO: Dashes may not actually line up with correct scale. Ask Jim about this
-            igv.Canvas.strokeLine.call(ctx, 45, yp - 2, 50, yp - 2, font); // Offset dashes up by 2 pixel
-            igv.Canvas.fillText.call(ctx, p, 44, yp + 2, font); // Offset numbers down by 2 pixels; TODO: error
+            igv.graphics.strokeLine(ctx, 45, yp - 2, 50, yp - 2, font); // Offset dashes up by 2 pixel
+            igv.graphics.fillText(ctx, p, 44, yp + 2, font); // Offset numbers down by 2 pixels; TODO: error
         }
 
 
         font['textAlign'] = 'center';
 
 
-        igv.Canvas.fillText.call(ctx, "-log10(pvalue)", pixelWidth / 2, pixelHeight / 2, font, {rotate: {angle: -90}});
+        igv.graphics.fillText(ctx, "-log10(pvalue)", pixelWidth / 2, pixelHeight / 2, font, {rotate: {angle: -90}});
 
 
     };
@@ -13026,8 +13490,8 @@ var igv = (function (igv) {
             yScale = (track.maxLogP - track.minLogP) / pixelHeight;
 
         // Background
-        if (this.background) igv.Canvas.fillRect.call(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': this.background});
-        igv.Canvas.strokeLine.call(ctx, 0, pixelHeight - 1, pixelWidth, pixelHeight - 1, {'strokeStyle': this.divider});
+        if (this.background) igv.graphics.fillRect(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': this.background});
+        igv.graphics.strokeLine(ctx, 0, pixelHeight - 1, pixelWidth, pixelHeight - 1, {'strokeStyle': this.divider});
 
         if (ctx) {
 
@@ -13053,7 +13517,7 @@ var igv = (function (igv) {
 
 
             //ctx.fillStyle = igv.selection.colorForGene(eqtl.geneName);
-            igv.Canvas.setProperties.call(ctx, {
+            igv.graphics.setProperties(ctx, {
                 fillStyle: "rgb(180, 180, 180)",
                 strokeStyle: "rgb(180, 180, 180)"
             });
@@ -13089,13 +13553,13 @@ var igv = (function (igv) {
                 var mLogP = -Math.log(eqtl[track.pValueField]) / Math.LN10;
                 if (mLogP < track.minLogP) continue;
 
-                py = Math.max(0, pixelHeight - Math.round((mLogP - track.minLogP) / yScale));
+                py = Math.max(0 + radius, pixelHeight - Math.round((mLogP - track.minLogP) / yScale));
                 eqtl.px = px;
                 eqtl.py = py;
 
-                if (color) igv.Canvas.setProperties.call(ctx, {fillStyle: color, strokeStyle: "black"});
-                igv.Canvas.fillCircle.call(ctx, px, py, radius);
-                igv.Canvas.strokeCircle.call(ctx, px, py, radius);
+                if (color) igv.graphics.setProperties(ctx, {fillStyle: color, strokeStyle: "black"});
+                igv.graphics.fillCircle(ctx, px, py, radius);
+                igv.graphics.strokeCircle(ctx, px, py, radius);
             }
         }
 
@@ -13702,18 +14166,20 @@ var igv = (function (igv) {
         this.proxy = config.proxy;   // might be null
 
         this.portalURL = config.portalURL ? config.portalURL : window.location.origin;
+        this.variantURL = config.variantURL || "http://www.type2diabetesgenetics.org/variant/variantInfo/";
+        this.traitURL = config.traitURL || "http://www.type2diabetesgenetics.org/trait/traitInfo/";
 
         var cs = config.colorScale || {
-            thresholds: [5e-8, 5e-4, 0.5],
-            colors: ["rgb(255,50,50)", "rgb(251,100,100)", "rgb(251,170,170)", "rgb(227,238,249)"]
-        };
+                thresholds: [5e-8, 5e-4, 0.5],
+                colors: ["rgb(255,50,50)", "rgb(251,100,100)", "rgb(251,170,170)", "rgb(227,238,249)"]
+            };
 
         this.pvalue = config.pvalue ? config.pvalue : "PVALUE";
 
         this.colorScale = new igv.BinnedColorScale(cs);
 
         // An obvious hack -- the source should be passed in as an arbument
-        if(config.format && ("gtexGWAS" === config.format)) {
+        if (config.format && ("gtexGWAS" === config.format)) {
             this.featureSource = new igv.FeatureSource(config);
         } else {
             this.featureSource = new igv.T2DVariantSource(config);
@@ -13748,8 +14214,8 @@ var igv = (function (igv) {
             this.po = undefined;
         }
 
-        if (this.background) igv.Canvas.fillRect.call(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': this.background});
-        igv.Canvas.strokeLine.call(ctx, 0, pixelHeight - 1, pixelWidth, pixelHeight - 1, {'strokeStyle': this.divider});
+        if (this.background) igv.graphics.fillRect(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': this.background});
+        igv.graphics.strokeLine(ctx, 0, pixelHeight - 1, pixelWidth, pixelHeight - 1, {'strokeStyle': this.divider});
 
         var variant, pos, len, xScale, px, px1, pw, py, color, pvalue, val;
 
@@ -13760,7 +14226,7 @@ var igv = (function (igv) {
 
                 variant = featureList[i];
 
-                pos = variant.POS || variant.start;     // TODO fixme
+                pos = variant.start;     // TODO fixme
 
                 if (pos < bpStart) continue;
                 if (pos > bpEnd) break;
@@ -13777,9 +14243,9 @@ var igv = (function (igv) {
 
                 py = Math.max(track.dotSize, pixelHeight - Math.round((val - track.minLogP) / yScale));
 
-                if (color) igv.Canvas.setProperties.call(ctx, {fillStyle: color, strokeStyle: "black"});
+                if (color) igv.graphics.setProperties(ctx, {fillStyle: color, strokeStyle: "black"});
 
-                igv.Canvas.fillCircle.call(ctx, px, py, track.dotSize);
+                igv.graphics.fillCircle(ctx, px, py, track.dotSize);
                 //canvas.strokeCircle(px, py, radius);
 
                 if (enablePopover) track.po.push({x: px, y: py, feature: variant});
@@ -13795,24 +14261,26 @@ var igv = (function (igv) {
         var track = this,
             yScale = (track.maxLogP - track.minLogP) / pixelHeight;
 
-        var font = {'font': 'normal 10px Arial',
+        var font = {
+            'font': 'normal 10px Arial',
             'textAlign': 'right',
-            'strokeStyle': "black"};
+            'strokeStyle': "black"
+        };
 
-        igv.Canvas.fillRect.call(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': "rgb(255, 255, 255)"});
+        igv.graphics.fillRect(ctx, 0, 0, pixelWidth, pixelHeight, {'fillStyle': "rgb(255, 255, 255)"});
 
         for (var p = 2; p < track.maxLogP; p += 2) {
             var yp = pixelHeight - Math.round((p - track.minLogP) / yScale);
             // TODO: Dashes may not actually line up with correct scale. Ask Jim about this
-            igv.Canvas.strokeLine.call(ctx, 45, yp - 2, 50, yp - 2, font); // Offset dashes up by 2 pixel
-            igv.Canvas.fillText.call(ctx, p, 44, yp + 2, font); // Offset numbers down by 2 pixels;
+            igv.graphics.strokeLine(ctx, 45, yp - 2, 50, yp - 2, font); // Offset dashes up by 2 pixel
+            igv.graphics.fillText(ctx, p, 44, yp + 2, font); // Offset numbers down by 2 pixels;
         }
 
 
         font['textAlign'] = 'center';
 
 
-        igv.Canvas.fillText.call(ctx, "-log10(pvalue)", pixelWidth / 2, pixelHeight / 2, font, {rotate: {angle: -90}});
+        igv.graphics.fillText(ctx, "-log10(pvalue)", pixelWidth / 2, pixelHeight / 2, font, {rotate: {angle: -90}});
 
 
     };
@@ -13841,8 +14309,10 @@ var igv = (function (igv) {
                     pvalue = p.feature[this.pvalue] || p.feature.pvalue;
                     dbSnp = p.feature.DBSNP_ID;
 
+
                     if (dbSnp) {
-                        data.push("<a target='_blank' href='" + url + "' >" + dbSnp + "</a>");
+                        url = this.variantURL.startsWith("http") ? this.variantURL : this.portalURL + "/" + this.variantURL;
+                        data.push("<a target='_blank' href='" + url + (url.endsWith("/") ? "" : "/") + dbSnp + "' >" + dbSnp + "</a>");
                     }
                     data.push(chr + ":" + pos.toString());
                     data.push({name: 'p-value', value: pvalue});
@@ -13852,8 +14322,9 @@ var igv = (function (igv) {
                     }
 
                     if (dbSnp) {
-                        url = this.portalURL + "/trait/traitInfo/" + dbSnp;
-                        data.push("<a target='_blank' href='" + url + "'>" + "see all available statistics for this variant</a>");
+                        url = this.traitURL.startsWith("http") ? this.traitURL : this.portalURL + "/" + this.traitURL;
+                        data.push("<a target='_blank' href='" + url + (url.endsWith("/") ? "" : "/") + dbSnp + "'>" +
+                        "see all available statistics for this variant</a>");
                     }
 
                     if (i < len - 1) {
@@ -13899,6 +14370,7 @@ var igv = (function (igv) {
 
 // Experimental class for fetching features from an mpg webservice.
 
+
 var igv = (function (igv) {
 
 
@@ -13910,13 +14382,28 @@ var igv = (function (igv) {
      */
     igv.T2DVariantSource = function (config) {
 
-        this.proxy = (config.proxy ? config.proxy : "//www.broadinstitute.org/igvdata/t2d/postJson.php");   // Always use a proxy for now
+        this.config = config;
         this.url = config.url;
         this.trait = config.trait;
-        this.valueThreshold = config.valueThreshold ? config.valueThreshold : 5E-2;
+        this.dataset = config.dataset;
+        this.pvalue = config.pvalue;
 
-        this.type = this.url.contains("variant") ? VARIANT : TRAIT;
-        this.pvalue = config.pvalue ? config.pvalue : "PVALUE";
+        // Hack for old service that is missing CORS headers
+       // if (config.dataset === undefined && config.proxy === undefined) {
+       //     config.proxy = "//data.broadinstitute.org/igvdata/t2d/postJson.php";
+       // }
+
+        if (config.valueThreshold === undefined) {
+            config.valueThreshold = 5E-2;
+        }
+
+        if (config.dataset === undefined) {
+            this.queryJson = config.queryJson || queryJsonV1;
+            this.jsonToVariants = config.jsonToVariants || jsonToVariantsV1;
+        } else {
+            this.queryJson = config.queryJson || queryJsonV2;
+            this.jsonToVariants = config.jsonToVariants || jsonToVariantsV2;
+        }
 
     };
 
@@ -13932,7 +14419,7 @@ var igv = (function (igv) {
      */
     igv.T2DVariantSource.prototype.getFeatures = function (chr, bpStart, bpEnd, success, task) {
 
-        var source = this;
+        var self = this;
 
         if (this.cache && this.cache.chr === chr && this.cache.end > bpEnd && this.cache.start < bpStart) {
             success(this.cache.featuresBetween(bpStart, bpEnd));
@@ -13940,67 +14427,50 @@ var igv = (function (igv) {
 
         else {
 
-            function loadFeatures() {
+            // Get a minimum 10mb window around the requested locus
+            var window = Math.max(bpEnd - bpStart, 10000000) / 2,
+                center = (bpEnd + bpStart) / 2,
+                queryChr = (chr.startsWith("chr") ? chr.substring(3) : chr), // Webservice uses "1,2,3..." convention
+                queryStart = Math.max(0, center - window),
+                queryEnd = center + window,
+                queryURL = this.config.proxy ? this.config.proxy : this.url,
+                body = this.queryJson(queryChr, queryStart, queryEnd, self.config);
 
-                // Get a minimum 10mb window around the requested locus
-                var window = Math.max(bpEnd - bpStart, 10000000) / 2,
-                    center = (bpEnd + bpStart) / 2,
-                    queryChr = (chr.startsWith("chr") ? chr.substring(3) : chr), // Webservice uses "1,2,3..." convention
-                    queryStart = Math.max(0, center - window),
-                    queryEnd = center + window,
-                    queryURL = this.proxy ? this.proxy : this.url,
-                    filters =
-                        [
-                            {"operand": "CHROM", "operator": "EQ", "value": queryChr, "filter_type": "STRING" },
-                            {"operand": "POS", "operator": "GT", "value": queryStart, "filter_type": "FLOAT" },
-                            {"operand": "POS", "operator": "LT", "value": queryEnd, "filter_type": "FLOAT" },
-                            {"operand": source.pvalue, "operator": "LTE", "value": source.valueThreshold, "filter_type": "FLOAT"}
-                        ],
-                    columns = source.type === TRAIT ?
-                        ["CHROM", "POS", "DBSNP_ID", "PVALUE", "ZSCORE"] :
-                        ["CHROM", "POS", source.pvalue, "DBSNP_ID"],
-                    data = {
-                        "user_group": "ui",
-                        "filters": filters,
-                        "columns": columns
-                    },
-                    tmp;
+            igvxhr.loadJson(queryURL, {
+                sendData: body,
+                task: task,
+                success: function (json) {
+                    var variants;
 
+                    if (json) {
 
-                if (source.type === TRAIT) data.trait = source.trait;
+                        if (json.error_code) {
+                            alert("Error querying trait " + self.trait + "  (error_code=" + json.error_code + ")");
+                            success(null);
+                        }
+                        else {
+                            variants = self.jsonToVariants(json, self.config);
 
-                tmp = this.proxy ?
-                    "url=" + this.url + "&data=" + JSON.stringify(data) :
-                    JSON.stringify(data);
-
-                igvxhr.loadJson(queryURL, {
-                    sendData: tmp,
-                    task: task,
-                    success: function (json) {
-                        var variants;
-
-                        if (json) {
-                            variants = json.variants;
                             variants.sort(function (a, b) {
                                 return a.POS - b.POS;
                             });
-                            source.cache = new FeatureCache(chr, queryStart, queryEnd, variants);
+
+                            // TODO -- extract pvalue
+
+                            self.cache = new FeatureCache(chr, queryStart, queryEnd, variants);
 
                             success(variants);
                         }
-                        else {
-                            success(null);
-                        }
-
                     }
-                });
+                    else {
+                        success(null);
+                    }
+                }
+            });
 
-            }
-
-            loadFeatures.call(this);
         }
-    }
 
+    }
 
     // Experimental linear index feature cache.
     var FeatureCache = function (chr, start, end, features) {
@@ -14037,8 +14507,143 @@ var igv = (function (igv) {
     }
 
 
+    //
+    //
+    /**
+     * Default json -> variant converter function.  Can be overriden.
+     * Convert webservice json to an array of variants
+     *
+     * @param json
+     * @param config
+     * @returns {Array|*}
+     */
+    function jsonToVariantsV2(json, config) {
+
+        variants = [];
+        json.variants.forEach(function (record) {
+
+            var variant = {};
+            record.forEach(function (object) {
+                for (var property in object) {
+                    if (object.hasOwnProperty(property)) {
+                        if ("POS" === property) {
+                            variant.start = object[property] - 1;
+                        }
+                        variant[property] = object[property];
+
+                    }
+                }
+
+            });
+
+            // "unwind" the pvalue, then null the nested array to save memory
+            variant.pvalue = variant[config.pvalue][config.dataset][config.trait];
+            variant[config.pvalue] = undefined;
+
+            variants.push(variant);
+        })
+        return variants;
+    }
+
+
+    function queryJsonV2(queryChr, queryStart, queryEnd, config) {
+        var phenotype = config.trait,
+            pvalue = config.pvalue,
+            dataset = config.dataset,
+            properties = {
+                "cproperty": ["VAR_ID", "DBSNP_ID", "CHROM", "POS"],
+                "orderBy": ["CHROM"],
+                "dproperty": {},
+                "pproperty": JSON.parse('{"' + pvalue + '": {"' + dataset + '": ["' + phenotype + '"]}}')
+            },
+
+            filters =
+                [
+                    {
+                        "dataset_id": "x",
+                        "phenotype": "x",
+                        "operand": "CHROM",
+                        "operator": "EQ",
+                        "value": queryChr,
+                        "operand_type": "STRING"
+                    },
+                    {
+                        "dataset_id": "x",
+                        "phenotype": "x",
+                        "operand": "POS",
+                        "operator": "GTE",
+                        "value": queryStart,
+                        "operand_type": "INTEGER"
+                    },
+                    {
+                        "dataset_id": "x",
+                        "phenotype": "x",
+                        "operand": "POS",
+                        "operator": "LTE",
+                        "value": queryEnd,
+                        "operand_type": "INTEGER"
+                    },
+                    {
+                        "dataset_id": dataset,
+                        "phenotype": phenotype,
+                        "operand": pvalue,
+                        "operator": "LT",
+                        "value": config.valueThreshold,
+                        "operand_type": "FLOAT"
+                    }
+                ],
+            data = {
+                "passback": "x",
+                "entity": "variant",
+                "properties": properties,
+                "filters": filters
+            };
+
+        return JSON.stringify(data);
+    }
+
+
+    function queryJsonV1(queryChr, queryStart, queryEnd, config) {
+
+        var type = config.url.contains("variant") ? VARIANT : TRAIT,
+            pvalue = config.pvalue ? config.pvalue : "PVALUE",
+
+            filters =
+                [
+                    {"operand": "CHROM", "operator": "EQ", "value": queryChr, "filter_type": "STRING"},
+                    {"operand": "POS", "operator": "GT", "value": queryStart, "filter_type": "FLOAT"},
+                    {"operand": "POS", "operator": "LT", "value": queryEnd, "filter_type": "FLOAT"},
+                    {"operand": pvalue, "operator": "LTE", "value": config.valueThreshold, "filter_type": "FLOAT"}
+                ],
+            columns = type === TRAIT ?
+                ["CHROM", "POS", "DBSNP_ID", "PVALUE", "ZSCORE"] :
+                ["CHROM", "POS", pvalue, "DBSNP_ID"],
+            data = {
+                "user_group": "ui",
+                "filters": filters,
+                "columns": columns
+            };
+
+
+        if (type === TRAIT) data.trait = config.trait;
+
+        return config.proxy ? "url=" + config.url + "&data=" + JSON.stringify(data) : JSON.stringify(data);
+
+    }
+
+    function jsonToVariantsV1(json, config) {
+
+        json.variants.forEach(function (variant) {
+            variant.chr = variant.CHROM;
+            variant.start = variant.POS - 1;
+        })
+        return json.variants;
+    }
+
+
     return igv;
 })(igv || {});
+
 
 /*
  * The MIT License (MIT)
@@ -14308,13 +14913,13 @@ var igv = (function (igv) {
  * Copyright (c) 2014 Broad Institute
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
+ * of ctx software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
  *
- * The above copyright notice and this permission notice shall be included in
+ * The above copyright notice and ctx permission notice shall be included in
  * all copies or substantial portions of the Software.
  *
  *
@@ -14328,11 +14933,11 @@ var igv = (function (igv) {
  */
 
 
-// Define singleton collection of helper functions.  The "this" paramter in these functions is a canvas 2d context.
+// Collection of helper functions for canvas rendering.  The "ctx" paramter in these functions is a canvas 2d context.
 //
 // Example usage
 //
-//    igv.Canvas.strokeLine.call(context, 0, 0, 10, 10);
+//    igv.graphics.strokeLine(context, 0, 0, 10, 10);
 //
 
 var igv = (function (igv) {
@@ -14340,54 +14945,54 @@ var igv = (function (igv) {
 
     var debug = false;
 
-        var log = function(msg) {
-        	if (debug) {
-        	    var d = new Date();
-        	    var time = d.getHours() + ":" + d.getMinutes() + ":" + d.getSeconds();
-        	    if (typeof copy != "undefined") {
-                    copy(msg);
-        	    }
-        	    if (typeof console != "undefined") {
-        			console.log("igv-canvas: " + time + " " + msg);			    
-        	    }
-        	   
-        	}
-        };
+    var log = function (msg) {
+        if (debug) {
+            var d = new Date();
+            var time = d.getHours() + ":" + d.getMinutes() + ":" + d.getSeconds();
+            if (typeof copy != "undefined") {
+                copy(msg);
+            }
+            if (typeof console != "undefined") {
+                console.log("igv-canvas: " + time + " " + msg);
+            }
 
-        
-    igv.Canvas = {
+        }
+    };
 
 
-        setProperties: function (properties) {
+    igv.graphics = {
+
+
+        setProperties: function (ctx, properties) {
 
             for (var key in properties) {
                 if (properties.hasOwnProperty(key)) {
                     var value = properties[key];
-                    this[key] = value;
+                    ctx[key] = value;
                 }
             }
         },
 
-        strokeLine: function (x1, y1, x2, y2, properties) {
+        strokeLine: function (ctx, x1, y1, x2, y2, properties) {
 
             x1 = Math.floor(x1) + 0.5;
             y1 = Math.floor(y1) + 0.5;
             x2 = Math.floor(x2) + 0.5;
             y2 = Math.floor(y2) + 0.5;
 
-            log("stroke line, prop: "+properties);
-            
-            this.save();
-            if (properties) igv.Canvas.setProperties.call(this, properties);
+            log("stroke line, prop: " + properties);
 
-            this.beginPath();
-            this.moveTo(x1, y1);
-            this.lineTo(x2, y2);
-            this.stroke();
-            this.restore();
+            ctx.save();
+            if (properties) igv.graphics.setProperties(ctx, properties);
+
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+            ctx.restore();
         },
 
-        fillRect: function (x, y, w, h, properties) {
+        fillRect: function (ctx, x, y, w, h, properties) {
 
             var c;
             x = Math.round(x);
@@ -14395,48 +15000,42 @@ var igv = (function (igv) {
 
             log("fillRect");
             if (properties) {
-                this.save();
-                igv.Canvas.setProperties.call(this, properties);
+                ctx.save();
+                igv.graphics.setProperties(ctx, properties);
             }
 
-            this.fillRect(x, y, w, h);
+            ctx.fillRect(x, y, w, h);
 
-            if (properties) this.restore();
+            if (properties) ctx.restore();
         },
 
-        fillPolygon: function (x, y, properties) {
-
-            var i, len = x.length;
-            for (i = 0; i < len; i++) {
-                x[i] = Math.round(x[i]);
-                y[i] = Math.round(y[i]);
-            }
-
-            this.save();
-            if (properties)   igv.Canvas.setProperties.call(this, properties);
-
-            this.beginPath();
-            this.moveTo(x[0], y[0]);
-            for (i = 1; i < len; i++) {
-                this.lineTo(x[i], y[i]);
-            }
-            this.closePath();
-            this.fill();
-
-            this.restore();
+        fillPolygon: function (ctx, x, y, properties) {
+            ctx.save();
+            if (properties)   igv.graphics.setProperties(ctx, properties);
+            doPath(ctx, x, y);
+            ctx.fill();
+            ctx.restore();
         },
 
-        fillText: function (text, x, y, properties, transforms) {
+        strokePolygon: function (ctx, x, y, properties) {
+            ctx.save();
+            if (properties)   igv.graphics.setProperties(ctx, properties);
+            doPath(ctx, x, y);
+            ctx.stroke();
+            ctx.restore();
+        },
+
+        fillText: function (ctx, text, x, y, properties, transforms) {
 
             if (properties) {
-                this.save();
-                igv.Canvas.setProperties.call(this, properties);
+                ctx.save();
+                igv.graphics.setProperties(ctx, properties);
             }
 
 
-            this.save();
+            ctx.save();
 
-            this.translate(x, y);
+            ctx.translate(x, y);
             if (transforms) {
 
                 for (var transform in transforms) {
@@ -14444,32 +15043,32 @@ var igv = (function (igv) {
 
                     // TODO: Add error checking for robustness
                     if (transform == 'translate') {
-                        this.translate(value['x'], value['y']);
+                        ctx.translate(value['x'], value['y']);
                     }
                     if (transform == 'rotate') {
-                        this.rotate(value['angle'] * Math.PI / 180);
+                        ctx.rotate(value['angle'] * Math.PI / 180);
                     }
                 }
 
             }
 
-            this.fillText(text, 0, 0);
-            this.restore();
+            ctx.fillText(text, 0, 0);
+            ctx.restore();
 
-            if (properties) this.restore();
+            if (properties) ctx.restore();
 
         },
 
-        strokeText: function (text, x, y, properties, transforms) {
+        strokeText: function (ctx, text, x, y, properties, transforms) {
 
 
-            this.save();
-            if (properties) {                
-                igv.Canvas.setProperties.call(this, properties);
+            ctx.save();
+            if (properties) {
+                igv.graphics.setProperties(ctx, properties);
             }
 
 
-            this.translate(x, y);
+            ctx.translate(x, y);
             if (transforms) {
 
                 for (var transform in transforms) {
@@ -14477,163 +15076,103 @@ var igv = (function (igv) {
 
                     // TODO: Add error checking for robustness
                     if (transform == 'translate') {
-                        this.translate(value['x'], value['y']);
+                        ctx.translate(value['x'], value['y']);
                     }
                     if (transform == 'rotate') {
-                        this.rotate(value['angle'] * Math.PI / 180);
+                        ctx.rotate(value['angle'] * Math.PI / 180);
                     }
                 }
             }
 
 
-            this.strokeText(text, 0, 0);
-            this.restore();
-           
+            ctx.strokeText(text, 0, 0);
+            ctx.restore();
+
         },
 
-        strokeCircle: function (x, y, radius) {
+        strokeCircle: function (ctx, x, y, radius) {
 
-            this.beginPath();
-            this.arc(x, y, radius, 0, 2 * Math.PI);
-            this.stroke();
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, 2 * Math.PI);
+            ctx.stroke();
         },
 
-        fillCircle: function (x, y, radius) {
+        fillCircle: function (ctx, x, y, radius) {
 
-            this.beginPath();
-            this.arc(x, y, radius, 0, 2 * Math.PI);
-            this.fill();
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, 2 * Math.PI);
+            ctx.fill();
         },
 
-        drawArrowhead: function (x, y, size, lineWidth) {
+        drawArrowhead: function (ctx, x, y, size, lineWidth) {
 
-            this.save();
+            ctx.save();
             if (!size) {
                 size = 5;
             }
             if (lineWidth) {
-                this.lineWidth = lineWidth;
+                ctx.lineWidth = lineWidth;
             }
-            this.beginPath();
-            this.moveTo(x, y - size / 2);
-            this.lineTo(x, y + size / 2);
-            this.lineTo(x + size, y);
-            this.lineTo(x, y - size / 2);
-            this.closePath();
-            this.fill();
-            this.restore();
+            ctx.beginPath();
+            ctx.moveTo(x, y - size / 2);
+            ctx.lineTo(x, y + size / 2);
+            ctx.lineTo(x + size, y);
+            ctx.lineTo(x, y - size / 2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
         },
 
-        roundRect: function (x, y, width, height, radius, fill, stroke) {
-
-            this.save();
-            if (typeof stroke == "undefined") {
-                stroke = true;
-            }
-            if (typeof radius === "undefined") {
-                radius = 5;
-            }
-            this.beginPath();
-            this.moveTo(x + radius, y);
-            this.lineTo(x + width - radius, y);
-            this.quadraticCurveTo(x + width, y, x + width, y + radius);
-            this.lineTo(x + width, y + height - radius);
-            this.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-            this.lineTo(x + radius, y + height);
-            this.quadraticCurveTo(x, y + height, x, y + height - radius);
-            this.lineTo(x, y + radius);
-            this.quadraticCurveTo(x, y, x + radius, y);
-            this.closePath();
-            if (stroke) {
-                this.stroke();
-            }
-            if (fill) {
-                this.fill();
-            }
-            this.restore();
-        },
-
-        polygon: function (x, y, fill, stroke) {
-
-            this.save();
-            if (typeof stroke == "undefined") {
-                stroke = true;
-            }
-
-            this.beginPath();
-            var len = x.length;
-            this.moveTo(x[0], y[0]);
-            for (var i = 1; i < len; i++) {
-                this.lineTo(x[i], y[i]);
-                // this.moveTo(x[i], y[i]);
-            }
-
-            this.closePath();
-            if (stroke) {
-                this.stroke();
-            }
-            if (fill) {
-                this.fill();
-            }
-            this.restore();
-        },
-        dashedLine: function( x1, y1, x2, y2, dashLen, properties) {
-            this.save();
+        dashedLine: function (ctx, x1, y1, x2, y2, dashLen, properties) {
+            ctx.save();
             x1 = Math.round(x1);
             y1 = Math.round(y1);
             x2 = Math.round(x2);
             y2 = Math.round(y2);
             dashLen = Math.round(dashLen);
             log("dashedLine");
-            if (properties) igv.Canvas.setProperties.call(this, properties);
+            if (properties) igv.graphics.setProperties(ctx, properties);
 
             if (dashLen == undefined) dashLen = 2;
-            this.moveTo(x1, y1);
+            ctx.moveTo(x1, y1);
 
             var dX = x2 - x1;
             var dY = y2 - y1;
             var dashes = Math.floor(Math.sqrt(dX * dX + dY * dY) / dashLen);
             var dashX = dX / dashes;
             var dashY = dY / dashes;
-            
+
             var q = 0;
             while (q++ < dashes) {
                 x1 += dashX;
                 y1 += dashY;
-                this[q % 2 == 0 ? 'moveTo' : 'lineTo'](x1, y1);
+                ctx[q % 2 == 0 ? 'moveTo' : 'lineTo'](x1, y1);
             }
-            this[q % 2 == 0 ? 'moveTo' : 'lineTo'](x2, y2);
+            ctx[q % 2 == 0 ? 'moveTo' : 'lineTo'](x2, y2);
 
-            this.restore();
-         },
-                        
-         lineTo: function(x, y, properties) {
-             
-             log("lineTo");
-             this.save();
-            x = Math.round(x);
-            y = Math.round(y);
+            ctx.restore();
+        },
 
-            if (properties) igv.Canvas.setProperties.call(this, properties);
-            this.lineTo(x, y);
 
-            this.restore();
-         },
-            
-         moveTo:  function(x, y, properties) {
-             log("moveTo");
-             this.save();
-            x = Math.round(x);
-            y = Math.round(y);
-
-            if (properties) igv.Canvas.setProperties.call(this, properties);
-
-            this.moveTo(x, y);
-
-            this.restore();
-        }
-            
     }
+
+    function doPath(ctx, x, y) {
+
+
+        var i, len = x.length;
+        for (i = 0; i < len; i++) {
+            x[i] = Math.round(x[i]);
+            y[i] = Math.round(y[i]);
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(x[0], y[0]);
+        for (i = 1; i < len; i++) {
+            ctx.lineTo(x[i], y[i]);
+        }
+        ctx.closePath();
+    }
+
     return igv;
 })(igv || {});
 
@@ -14669,7 +15208,7 @@ var igv = (function (igv) {
  */
 var igv = (function (igv) {
 
-    igv.hex2Color = function(hex) {
+    igv.hex2Color = function (hex) {
 
         var cooked = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
 
@@ -14677,7 +15216,7 @@ var igv = (function (igv) {
             return undefined;
         }
 
-        return "rgb(" + parseInt(cooked[ 1 ], 16) + "," + parseInt(cooked[ 2 ], 16) + "," + parseInt(cooked[ 3 ], 16) + ")";
+        return "rgb(" + parseInt(cooked[1], 16) + "," + parseInt(cooked[2], 16) + "," + parseInt(cooked[3], 16) + ")";
     };
 
     igv.rgbaColor = function (r, g, b, a) {
@@ -14698,6 +15237,17 @@ var igv = (function (igv) {
 
         return "rgb(" + r + "," + g + "," + b + ")";
     };
+
+    igv.addAlphaToRGB = function (rgbString, alpha) {
+
+        if (rgbString.startsWith("rgb")) {
+            return rgbString.replace("rgb", "rgba").replace(")", ", " + alpha + ")");
+        } else {
+            console.log(rgbString + " is not an rgb style string");
+            return rgbString;
+        }
+
+    }
 
     igv.greyScale = function (value) {
 
@@ -14730,11 +15280,11 @@ var igv = (function (igv) {
 
     igv.nucleotideColorComponents = {
         "A": [0, 200, 0],
-        "C": [  0, 0, 200],
+        "C": [0, 0, 200],
         "T": [255, 0, 0],
         "G": [209, 113, 5],
-        "a": [  0, 200, 0],
-        "c": [  0, 0, 200],
+        "a": [0, 200, 0],
+        "c": [0, 0, 200],
         "t": [255, 0, 0],
         "g": [209, 113, 5]
     }
@@ -14813,7 +15363,7 @@ var igv = (function (igv) {
      *
      * @constructor
      */
-    igv.GradientColorScale = function(scale) {
+    igv.GradientColorScale = function (scale) {
 
         this.scale = scale;
         this.lowColor = "rgb(" + scale.lowR + "," + scale.lowG + "," + scale.lowB + ")";
@@ -14826,8 +15376,8 @@ var igv = (function (igv) {
 
         var scale = this.scale, r, g, b, frac;
 
-        if(value <= scale.low) return this.lowColor;
-        else if(value >= scale.high) return this.highColor;
+        if (value <= scale.low) return this.lowColor;
+        else if (value >= scale.high) return this.highColor;
 
         frac = (value - scale.low) / this.diff;
         r = Math.floor(scale.lowR + frac * (scale.highR - scale.lowR));
@@ -14960,6 +15510,7 @@ var igv = (function (igv) {
             return;
         }
 
+
         //Set order of tracks, otherwise they will be ordered randomly as each completes its async load
         if (config.tracks) {
             config.tracks.forEach(function (track) {
@@ -14997,11 +15548,13 @@ var igv = (function (igv) {
 
         // Create controls.  This can be customized by passing in a function, which should return a div containing the
         // controls
-        controlDiv = config.createControls ?
-            config.createControls(browser, config) :
-            createStandardControls(browser, config);
 
-        $(rootDiv).append($(controlDiv));
+        if(config.showCommandBar !== false) {
+            controlDiv = config.createControls ?
+                config.createControls(browser, config) :
+                createStandardControls(browser, config);
+            $(rootDiv).append($(controlDiv));
+        }
 
         contentDiv = $('<div id="igvContentDiv" class="igv-content-div">')[0];
         $(rootDiv).append(contentDiv);
@@ -15032,6 +15585,10 @@ var igv = (function (igv) {
         // Dialog object -- singleton shared by all components
         igv.dialog = new igv.Dialog(bodyObject);
         igv.dialog.hide();
+
+        // Data Range Dialog object -- singleton shared by all components
+        igv.dataRangeDialog = new igv.DataRangeDialog(bodyObject);
+        igv.dataRangeDialog.hide();
 
         // extend jquery ui dialog widget to support enter key triggering "ok" button press.
         $.extend($.ui.dialog.prototype.options, {
@@ -15138,8 +15695,9 @@ var igv = (function (igv) {
             controlDiv = $('<div id="igvControlDiv">')[0],
             contentKaryo,
             navigation,
-            search,
+            searchContainer,
             searchButton,
+            $trackLabelToggle,
             zoom,
             zoomInButton,
             zoomOutButton,
@@ -15170,14 +15728,20 @@ var igv = (function (igv) {
             igvLogo = $('<div class="igv-logo">');
             navigation.append(igvLogo[0]);
 
-            search = $('<div class="igvNavigationSearch">');
-            navigation.append(search[0]);
+
+
+
+
+
+
+            searchContainer = $('<div class="igvNavigationSearch">');
+            navigation.append(searchContainer[0]);
 
             browser.searchInput = $('<input class="igvNavigationSearchInput" type="text" placeholder="Locus Search">');
-            search.append(browser.searchInput[0]);
+            searchContainer.append(browser.searchInput[0]);
 
             searchButton = $('<i class="igv-app-icon fa fa-search fa-18px shim-left-6">');
-            search.append(searchButton[0]);
+            searchContainer.append(searchButton[0]);
 
             browser.searchInput.change(function () {
 
@@ -15187,6 +15751,22 @@ var igv = (function (igv) {
             searchButton.click(function () {
                 browser.search(browser.searchInput.val());
             });
+
+            // search results presented in table
+            browser.$searchResults = $('<div class="igvNavigationSearchResults">');
+            browser.$searchResultsTable = $('<table class="igvNavigationSearchResultsTable">');
+
+            browser.$searchResults.append(browser.$searchResultsTable[0 ]);
+
+            searchContainer.append(browser.$searchResults[ 0 ]);
+
+            browser.$searchResults.hide();
+
+
+
+
+
+
 
             // window size panel
             browser.windowSizePanel = new igv.WindowSizePanel(navigation);
@@ -15209,6 +15789,25 @@ var igv = (function (igv) {
             zoomOutButton.click(function () {
                 igv.browser.zoomOut();
             });
+
+            // toggle track labels
+            $trackLabelToggle = $('<div class="igvNavigationToggleTrackLabels">');
+            $trackLabelToggle.text("hide labels");
+            navigation.append($trackLabelToggle[ 0 ]);
+
+            $trackLabelToggle.click(function () {
+
+                browser.trackLabelsVisible = !browser.trackLabelsVisible;
+                if (false === browser.trackLabelsVisible) {
+                    $(this).text("show labels");
+                    $('.igv-app-icon-container').hide();
+                } else {
+                    $(this).text("hide labels");
+                    $('.igv-app-icon-container').show();
+                }
+
+            });
+
         }
 
         if (config.showKaryo) {
@@ -15626,7 +16225,7 @@ var igv = (function (igv) {
 
         return topLeft;
 
-    }
+    };
 
     igv.trackMenuItems = function (popover, trackView) {
 
@@ -15667,13 +16266,12 @@ var igv = (function (igv) {
                     }
 
                     function parseNumber(value) {
-
-                        var number = parseFloat(value, 10);
-
-                        return number;
+                        return parseFloat(value, 10);
                     }
 
-                })
+                }),
+
+                //igv.dataRangeMenuItem(popover, trackView)
 
             ];
 
@@ -15742,6 +16340,53 @@ var igv = (function (igv) {
                 igv.dialog.dialogInput.change(dialogInputChange);
 
                 igv.dialog.show();
+                popover.hide();
+            }
+        }
+    };
+
+    igv.dataRangeMenuItem = function (popover, trackView) {
+
+        return {
+            object: $('<div class="igv-track-menu-item">' + "Set data range" + '</div>'),
+            click: function () {
+
+                var min, max,
+                    dataRangeDialog = igv.dataRangeDialog;;
+
+                dataRangeDialog.trackView = trackView;
+
+                // minimum
+                if(trackView.track.dataRange) {
+                    min = trackView.track.dataRange.min;
+                    max = trackView.track.dataRange.max;
+                }
+                else {
+                    min = 0;
+                    max = 100;
+                }
+                dataRangeDialog.minInput.val(min);
+                dataRangeDialog.maxInput.val(max);
+                dataRangeDialog.logInput.prop('checked', false);
+
+                dataRangeDialog.ok.unbind();
+                dataRangeDialog.ok.click(function() {
+                    min = parseFloat(dataRangeDialog.minInput.val());
+                    max = parseFloat(dataRangeDialog.maxInput.val());
+                    if(isNaN(min) || isNaN(max)) {
+                        alert("Must input numeric values");
+                    }
+                    else {
+                        trackView.track.min = min;
+                        trackView.track.max = max;
+                        console.log("min " + dataRangeDialog.minInput.val() + " max " + dataRangeDialog.maxInput.val() + " log " + dataRangeDialog.logInput.is(':checked'));
+                        dataRangeDialog.hide();
+                        trackView.update();
+                    }
+
+                });
+
+                dataRangeDialog.show();
                 popover.hide();
             }
         }
@@ -16072,6 +16717,14 @@ var igv = (function (igv) {
     igv.isStringOrNumber = function (value) {
         return (value.substring || value.toFixed) ? true : false
     }
+
+
+    igv.log = function(message) {
+        if(igv.enableLogging && console && console.log) {
+            console.log(message);
+        }
+    }
+
 
     return igv;
 
@@ -17894,7 +18547,7 @@ var igv = (function (igv) {
         x = 0;
 
         //canvas.setProperties({textAlign: 'center'});
-        igv.Canvas.setProperties.call(ctx, fontStyle );
+        igv.graphics.setProperties(ctx, fontStyle );
         while (x < options.pixelWidth) {
 
             var l = Math.floor(nTick * spacing);
@@ -17902,14 +18555,14 @@ var igv = (function (igv) {
             var chrPosition = formatNumber(l / ts.unitMultiplier, 0) + " " + ts.majorUnit;
 
             if (nTick % 1 == 0) {
-                igv.Canvas.fillText.call(ctx, chrPosition, x, this.height - 15);
+                igv.graphics.fillText(ctx, chrPosition, x, this.height - 15);
             }
 
-            igv.Canvas.strokeLine.call(ctx, x, this.height - 10, x, this.height - 2);
+            igv.graphics.strokeLine(ctx, x, this.height - 10, x, this.height - 2);
 
             nTick++;
         }
-        igv.Canvas.strokeLine.call(ctx, 0, this.height - 1, options.pixelWidth, this.height - 1);
+        igv.graphics.strokeLine(ctx, 0, this.height - 1, options.pixelWidth, this.height - 1);
 
 
         function formatNumber(anynum, decimal) {
@@ -18105,11 +18758,11 @@ var igv = (function (igv) {
 
                     if (bpPerPixel > 1 / 10) {
 
-                        igv.Canvas.fillRect.call(ctx, p0, 0, p1 - p0, 10, {fillStyle: c});
+                        igv.graphics.fillRect(ctx, p0, 0, p1 - p0, 10, {fillStyle: c});
                     }
                     else {
 
-                        igv.Canvas.strokeText.call(ctx, b, pc, y, {
+                        igv.graphics.strokeText(ctx, b, pc, y, {
                             strokeStyle: c,
                             font: 'normal 10px Arial',
                             textAlign: 'center'
@@ -19758,6 +20411,13 @@ var igv = (function (igv) {
         }
     };
 
+    igv.TrackView.prototype.setDataRange = function (min, max, logScale) {
+
+        console.log("set track data range min " + min + " max " + max + " logScale " + (true === logScale ? "yes" : "no"));
+        //setTrackHeight_.call(this, newHeight, update || true);
+
+    };
+
     igv.TrackView.prototype.addViewportToParentTrackDiv = function (trackDiv) {
 
         // viewport
@@ -19790,47 +20450,31 @@ var igv = (function (igv) {
 
         var myself = this,
             labelButton,
-            trackIconContainer;
+            trackIconContainer,
+            description;
 
         if ("CURSOR" !== this.browser.type) {
 
+            if (this.track.name) {
 
-            if (this.track.description) {
 
-                labelButton = document.createElement("button");
-                viewportDiv.appendChild(labelButton);
-                this.track.labelButton = labelButton;
+                trackIconContainer = $('<div class="igv-app-icon-container">');
+                $(viewportDiv).append(trackIconContainer[0]);
 
-                labelButton.className = "btn btn-xs btn-cursor-deselected igv-track-label-span-base";
-                labelButton.style.position = "absolute";
-                labelButton.style.top = "10px";
-                labelButton.style.left = "10px";
-                labelButton.innerHTML = this.track.name;
+                this.track.labelSpan = $('<span class="igv-track-label-span-base">')[0];
+                this.track.labelSpan.innerHTML = this.track.name;
+                $(trackIconContainer).append(this.track.labelSpan);
 
-                labelButton.onclick = function (e) {
-                    igv.popover.presentTrackPopup(e.pageX, e.pageY, myself.track.description);
+                description = this.track.description || this.track.name;
+                this.track.labelSpan.onclick = function (e) {
+                    igv.popover.presentTrackPopup(e.pageX, e.pageY, description);
                 }
 
-            } else {
+                $(viewportDiv).scroll(function () {
+                    trackIconContainer.css({"top": $(viewportDiv).scrollTop() + "px"});
 
-                if (this.track.name) {
+                });
 
-                    trackIconContainer = $('<div class="igv-app-icon-container">');
-                    $(viewportDiv).append(trackIconContainer[0]);
-
-                    this.track.labelSpan = $('<span class="igv-track-label-span-base">')[0];
-                    this.track.labelSpan.innerHTML = this.track.name;
-                    $(trackIconContainer).append(this.track.labelSpan);
-
-                    $(viewportDiv).scroll(function () {
-
-                        //console.log("viewportDiv scrolled " + $(viewportDiv).scrollTop());
-
-                        trackIconContainer.css({"top": $(viewportDiv).scrollTop() + "px"});
-
-                    });
-
-                }
 
             }
 
@@ -19925,7 +20569,7 @@ var igv = (function (igv) {
             setTrackHeight_.call(this, newHeight, false);
         }
         else {
-            if(this.trackDiv.clientHeight > newHeight) {
+            if (this.trackDiv.clientHeight > newHeight) {
                 this.trackDiv.style.height = contentHeightStr;
             }
             this.canvas.setAttribute("height", this.canvas.clientHeight);
@@ -19935,7 +20579,7 @@ var igv = (function (igv) {
             }
         }
 
-     //   this.update();
+        //   this.update();
     };
 
     function setTrackHeight_(newHeight, update) {
@@ -21031,7 +21675,11 @@ var igv = (function (igv) {
 
     igv.WIGTrack.prototype.popupMenuItems = function (popover) {
 
-        return [ igv.colorPickerMenuItem(popover, this.trackView) ];
+        var menuItems = [];
+        menuItems.push(igv.colorPickerMenuItem(popover, this.trackView));
+        menuItems.push(igv.dataRangeMenuItem(popover, this.trackView));
+
+        return menuItems;
 
     };
 
@@ -21050,14 +21698,19 @@ var igv = (function (igv) {
             featureValueRange;
 
         if (features && features.length > 0) {
-            featureValueMinimum = track.min ? track.min : 0;
-            featureValueMaximum = track.max;
-            if (featureValueMaximum === undefined) {
+            if(track.max === undefined)  {
                 var s = autoscale(features);
                 featureValueMinimum = s.min;
                 featureValueMaximum = s.max;
             }
+            else {
+                featureValueMinimum = track.min === undefined ? 0 : track.min;
+                featureValueMaximum = track.max;
+            }
+
             featureValueRange = featureValueMaximum - featureValueMinimum;
+
+            track.dataRange = {min: featureValueMinimum, max: featureValueMaximum};  // Record for disply, menu, etc
 
             features.forEach(renderFeature);
         }
@@ -21077,8 +21730,8 @@ var igv = (function (igv) {
             if (feature.end < bpStart) return;
             if (feature.start > bpEnd) return;
 
-            x = (feature.start - bpStart) / bpPerPixel;
-            rectEnd = (feature.end - bpStart) / bpPerPixel;
+            x = Math.floor((feature.start - bpStart) / bpPerPixel);
+            rectEnd = Math.ceil((feature.end - bpStart) / bpPerPixel);
             width = Math.max(1, rectEnd - x);
 
             //height = ((feature.value - featureValueMinimum) / featureValueRange) * pixelHeight;
@@ -21096,7 +21749,7 @@ var igv = (function (igv) {
                 }
 
             }
-            else if (featureValueMaximum < 0) {
+            else if (featureValueMinimum < 0) {
                 yUnitless = 0;
                 heightUnitLess = -feature.value/featureValueRange;
             }
@@ -21106,14 +21759,14 @@ var igv = (function (igv) {
             }
 
             //canvas.fillRect(x, yUnitless * pixelHeight, width, heightUnitLess * pixelHeight, { fillStyle: igv.randomRGB(64, 255) });
-            igv.Canvas.fillRect.call(ctx, x,  yUnitless * pixelHeight, width, heightUnitLess * pixelHeight, { fillStyle: track.color });
+            igv.graphics.fillRect(ctx, x,  yUnitless * pixelHeight, width, heightUnitLess * pixelHeight, { fillStyle: track.color });
 
         }
 
     };
 
     function autoscale(features) {
-        var min = Number.MAX_VALUE,
+        var min = 0,
             max = -Number.MAX_VALUE;
 
         features.forEach(function (f) {

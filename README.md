@@ -32,7 +32,7 @@ Require IGV (and dependencies) to the application's application.js:
 ```javascript
 //= require jquery
 //= require jquery-ui
-//= require igv
+//= require igv-beta
 ```
 
 Require IGV CSS (and dependencies) to the application's application.css:
@@ -41,7 +41,7 @@ Require IGV CSS (and dependencies) to the application's application.css:
 /*
 *= require font-awesome
 *= require jquery-ui
-*= require igv
+*= require igv-beta
 */
 ```
 
@@ -89,11 +89,9 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 		bundle gem igv-rails
 		cd igv-rails
 		mkdir -p vendor/assets/javascripts
-		curl http://www.broadinstitute.org/igv/projects/igv-web/dist/igv-all.min.js -o vendor/assets/javascripts/igv-all.js
+		curl http://igv.org/web/beta/igv-beta.js -o vendor/assets/javascripts/igv-beta.js
 		mkdir -p vendor/assets/stylesheets
-		curl http://www.broadinstitute.org/igv/projects/igv-web/css/igv.css -o vendor/assets/stylesheets/igv.css
-		mkdir -p vendor/assets/images
-		curl http://www.broadinstitute.org/igv/projects/igv-web/dist/igv-all.min.map -o vendor/assets/images/igv-all.min.map
+		curl http://igv.org/web/beta/igv-beta.css -o vendor/assets/stylesheets/igv-beta.css
 		echo "" >> README.md; echo "# igv appended README #" >> README.md; echo "" >> README.md
 		curl https://github.com/broadinstitute/igv-web/blob/master/README.md >> README.md
 		echo "" >> LICENSE; echo "# igv appended LICENSE #" >> LICENSE; echo "" >> LICENSE
@@ -104,7 +102,7 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 
 * modify **lib/igv/rails/version.rb** to match igv-all.js version
 
-		VERSION = "0.0.1.*"
+		VERSION = "1.0.0.*"
 
 * modify **lib/igv/rails.rb** to subclass Rails::Engine
 

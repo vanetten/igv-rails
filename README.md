@@ -91,7 +91,7 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 		mkdir -p vendor/assets/javascripts
 		curl http://igv.org/web/release/0.9.3/igv-0.9.3.js -o vendor/assets/javascripts/igv.js
 		mkdir -p vendor/assets/stylesheets
-		curl http://igv.org/web/release/0.9.3/igv-0.9.3.js -o vendor/assets/stylesheets/igv.css
+		curl http://igv.org/web/release/0.9.3/igv-0.9.3.css -o vendor/assets/stylesheets/igv.css
 		echo "" >> README.md; echo "# igv appended README #" >> README.md; echo "" >> README.md
 		curl https://github.com/broadinstitute/igv-web/blob/master/README.md >> README.md
 		echo "" >> LICENSE; echo "# igv appended LICENSE #" >> LICENSE; echo "" >> LICENSE

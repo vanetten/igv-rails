@@ -89,9 +89,9 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 		bundle gem igv-rails
 		cd igv-rails
 		mkdir -p vendor/assets/javascripts
-		curl http://igv.org/web/release/1.0.1/igv-1.0.1.js -o vendor/assets/javascripts/igv.js
+		curl http://igv.org/web/release/1.0.9/igv-1.0.9.js -o vendor/assets/javascripts/igv.js
 		mkdir -p vendor/assets/stylesheets
-		curl http://igv.org/web/release/1.0.1/igv-1.0.1.css -o vendor/assets/stylesheets/igv.css
+		curl http://igv.org/web/release/1.0.9/igv-1.0.9.css -o vendor/assets/stylesheets/igv.css
 		echo "" >> README.md; echo "# igv appended README #" >> README.md; echo "" >> README.md
 		curl https://github.com/broadinstitute/igv-web/blob/master/README.md >> README.md
 		echo "" >> LICENSE; echo "# igv appended LICENSE #" >> LICENSE; echo "" >> LICENSE
@@ -102,7 +102,7 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 
 * modify **lib/igv/rails/version.rb** to match igv-all.js version
 
-		VERSION = "1.0.0.*"
+		VERSION = "1.0.9.*"
 
 * modify **lib/igv/rails.rb** to subclass Rails::Engine
 

@@ -2776,7 +2776,7 @@ var igv = (function (igv) {
                 .then(function (chrToIndex) {
 
                     var chrId, queryChr, alignmentContainer;
-                    
+
                     queryChr = self.chrAliasTable.hasOwnProperty(chr) ? self.chrAliasTable[chr] : chr;
 
                     chrId = chrToIndex[queryChr];
@@ -2816,7 +2816,7 @@ var igv = (function (igv) {
                                             .then(function (compressed) {
 
                                                 var ba = new Uint8Array(igv.unbgzf(compressed)); //new Uint8Array(igv.unbgzf(compressed)); //, c.maxv.block - c.minv.block + 1));
-                                                igv.BamUtils.decodeBamRecords(ba, c.minv.offset, alignmentContainer, bpStart, bpEnd, chrId, self.indexToChr[chrId], self.filter);
+                                                igv.BamUtils.decodeBamRecords(ba, c.minv.offset, alignmentContainer, bpStart, bpEnd, chrId, self.indexToChr, self.filter);
 
                                                 fulfill(alignmentContainer);
 
@@ -3361,16 +3361,6 @@ var igv = (function (igv) {
 
     };
 
-    igv.BAMTrack.prototype.popupData = function (genomicLocation, xOffset, yOffset, referenceFrame) {
-
-        if (yOffset >= this.coverageTrack.top && yOffset < this.coverageTrack.height) {
-            return this.coverageTrack.popupData(genomicLocation, xOffset, this.coverageTrack.top, referenceFrame);
-        } else {
-            return this.alignmentTrack.popupData(genomicLocation, xOffset, yOffset - this.alignmentTrack.top, referenceFrame);
-        }
-
-    };
-
     igv.BAMTrack.prototype.popupDataWithConfiguration = function (config) {
 
         if (config.y >= this.coverageTrack.top && config.y < this.coverageTrack.height) {
@@ -3871,7 +3861,6 @@ var igv = (function (igv) {
         function drawPairConnector(alignment, yRect, alignmentHeight) {
 
             var alignmentColor = getAlignmentColor.call(self, alignment.firstAlignment),
-                outlineColor = 'alignmentColor',
                 xBlockStart = (alignment.connectingStart - bpStart) / bpPerPixel,
                 xBlockEnd = (alignment.connectingEnd - bpStart) / bpPerPixel,
                 yStrokedLine = yRect + alignmentHeight / 2;
@@ -3884,7 +3873,7 @@ var igv = (function (igv) {
                 alignmentColor = igv.addAlphaToRGB(alignmentColor, "0.15");
             }
 
-            igv.graphics.setProperties(ctx, {fillStyle: alignmentColor, strokeStyle: outlineColor});
+            igv.graphics.setProperties(ctx, {fillStyle: alignmentColor, strokeStyle: alignmentColor});
 
             igv.graphics.strokeLine(ctx, xBlockStart, yStrokedLine, xBlockEnd, yStrokedLine);
 
@@ -4446,7 +4435,7 @@ var igv = (function (igv) {
                 } else {
                     qualArray = [];
                     for (j = 0; j < lseq; ++j) {
-                        qualArray.push(ba[p + j] - 33);
+                        qualArray.push(ba[p + j]);
                     }
                 }
                 p += lseq;
@@ -6837,7 +6826,7 @@ var igv = (function (igv) {
         trackView = new igv.TrackView(this, $(this.trackContainerDiv), track);
         this.trackViews.push(trackView);
         this.reorderTracks();
-        trackView.resize();
+        trackView.update();
     };
 
     igv.Browser.prototype.reorderTracks = function () {
@@ -11269,6 +11258,8 @@ var igv = (function (igv) {
             }
         } else if (config.sourceType === "bigquery") {
             this.reader = new igv.BigQueryFeatureReader(config);
+        } else if (config.sourceType === 'ucscservice') {
+            this.reader = new igv.UCSCServiceReader(config.source);
         } else if (config.source !== undefined) {
             this.reader = new igv.CustomServiceReader(config.source);
         }
@@ -11597,7 +11588,7 @@ var igv = (function (igv) {
         }
         this.maxRows = config.maxRows;
 
-        if ( config.url &&
+        if (config.url &&
             (
                 igv.filenameOrURLHasSuffix(config.url, '.bigbed') || igv.filenameOrURLHasSuffix(config.url, '.bb')
                 ||
@@ -11616,13 +11607,14 @@ var igv = (function (igv) {
             this.render = renderVariant;
             this.homvarColor = "rgb(17,248,254)";
             this.hetvarColor = "rgb(34,12,253)";
-        }
-        else if ("FusionJuncSpan" === config.type) {
+        } else if ("FusionJuncSpan" === config.type) {
             this.render = renderFusionJuncSpan;
             this.height = config.height || 50;
             this.autoHeight = false;
-        }
-        else {
+        } else if ("snp" === config.type) {
+            // TODO -- snp specific render function
+            this.render = renderFeature;
+        } else {
             this.render = renderFeature;
             this.arrowSpacing = 30;
 
@@ -11682,6 +11674,7 @@ var igv = (function (igv) {
      * @returns {*}
      */
     igv.FeatureTrack.prototype.computePixelHeight = function (features) {
+        var height;
 
         if (this.displayMode === "COLLAPSED") {
             return this.variantHeight;
@@ -11691,11 +11684,15 @@ var igv = (function (igv) {
             if (features && (typeof features.forEach === "function")) {
                 features.forEach(function (feature) {
 
-                    if (feature.row && feature.row > maxRow) maxRow = feature.row;
+                    if (feature.row && feature.row > maxRow) {
+                        maxRow = feature.row;
+                    }
 
                 });
             }
-            return Math.max(this.variantHeight, (maxRow + 1) * (this.displayMode === "SQUISHED" ? this.squishedCallHeight : this.expandedCallHeight));
+
+            height = Math.max(this.variantHeight, (maxRow + 1) * ("SQUISHED" === this.displayMode ? this.squishedCallHeight : this.expandedCallHeight));
+            return height;
 
         }
 
@@ -11726,7 +11723,7 @@ var igv = (function (igv) {
                 if (gene.end < bpStart) continue;
                 if (gene.start > bpEnd) break;
 
-                if(!selectedFeature && selectedFeatureName && selectedFeatureName === gene.name.toUpperCase()) {
+                if (!selectedFeature && selectedFeatureName && selectedFeatureName === gene.name.toUpperCase()) {
                     selectedFeature = gene;
                 }
                 else {
@@ -11734,7 +11731,7 @@ var igv = (function (igv) {
                 }
             }
 
-            if(selectedFeature) {
+            if (selectedFeature) {
                 c = selectedFeature.color;
                 selectedFeature.color = "rgb(255,0,0)";
                 track.render.call(this, selectedFeature, bpStart, bpPerPixel, pixelHeight, ctx, options);
@@ -11761,30 +11758,51 @@ var igv = (function (igv) {
         // feature is not already loaded this won't work,  but the user wouldn't be mousing over it either.
         if (this.featureSource.featureCache) {
 
-            var chr = referenceFrame.chrName,
-                tolerance = 2 * referenceFrame.bpPerPixel,  // We need some tolerance around genomicLocation, start with +/- 2 pixels
-                featureList = this.featureSource.featureCache.queryFeatures(chr, genomicLocation - tolerance, genomicLocation + tolerance),
-                row;
+            var tolerance,
+                featureList,
+                row,
+                popupData,
+                ss,
+                ee,
+                str,
+                filtered,
+                mapped;
+
+            // We need some tolerance around genomicLocation, start with +/- 2 pixels
+            tolerance = 2 * referenceFrame.bpPerPixel;
+            ss = genomicLocation - tolerance;
+            ee = genomicLocation + tolerance;
+            featureList = this.featureSource.featureCache.queryFeatures(referenceFrame.chrName, ss, ee);
 
             if ('COLLAPSED' !== this.displayMode) {
-                row = 'SQUISHED' === this.displayMode ? Math.floor(yOffset / this.squishedCallHeight) : Math.floor(yOffset / this.expandedCallHeight);
+                row = 'SQUISHED' === this.displayMode ? Math.floor((yOffset - 2)/this.expandedCallHeight) : Math.floor((yOffset - 5)/this.squishedCallHeight);
             }
 
             if (featureList && featureList.length > 0) {
 
+                // filtered = _.filter(featureList, function (ff) {
+                //     return ff.end >= ss && ff.start <= ee;
+                // });
+                //
+                // mapped = _.map(filtered, function (f) {
+                //     return f.row;
+                // });
+                //
+                // str = mapped.join(' ');
 
-                var popupData = [];
+                popupData = [];
                 featureList.forEach(function (feature) {
-                    if (feature.end >= genomicLocation - tolerance &&
-                        feature.start <= genomicLocation + tolerance) {
+                    var featureData;
 
-                        // If row number is specified use it
+                    if (feature.end >= ss && feature.start <= ee) {
+
+                        // console.log('row ' + row + ' feature-rows ' + str + ' features ' + _.size(featureList));
+
                         if (row === undefined || feature.row === undefined || row === feature.row) {
-                            var featureData;
+
                             if (feature.popupData) {
                                 featureData = feature.popupData(genomicLocation);
-                            }
-                            else {
+                            } else {
                                 featureData = extractPopupData(feature);
                             }
                             if (featureData) {
@@ -11831,7 +11849,7 @@ var igv = (function (igv) {
 
         menuItems.push(igv.colorPickerMenuItem(popover, this.trackView));
 
-        mapped = _.map(["COLLAPSED", "SQUISHED", "EXPANDED"], function(displayMode, index) {
+        mapped = _.map(["COLLAPSED", "SQUISHED", "EXPANDED"], function (displayMode, index) {
             return {
                 object: $(markupStringified(displayMode, index, self.displayMode)),
                 click: function () {
@@ -11850,17 +11868,17 @@ var igv = (function (igv) {
                 chosen;
 
             lut =
-                {
-                    "COLLAPSED": "Collapse",
-                    "SQUISHED": "Squish",
-                    "EXPANDED": "Expand"
-                };
+            {
+                "COLLAPSED": "Collapse",
+                "SQUISHED": "Squish",
+                "EXPANDED": "Expand"
+            };
 
             chosen = (0 === index) ? '<div class="igv-track-menu-border-top">' : '<div>';
             if (displayMode === selfDisplayMode) {
-                return chosen + '<i class="fa fa-check fa-check-shim"></i>' + lut[ displayMode ] + '</div>'
+                return chosen + '<i class="fa fa-check fa-check-shim"></i>' + lut[displayMode] + '</div>'
             } else {
-                return chosen + '<i class="fa fa-check fa-check-shim fa-check-hidden"></i>' + lut[ displayMode ] + '</div>';
+                return chosen + '<i class="fa fa-check fa-check-shim fa-check-hidden"></i>' + lut[displayMode] + '</div>';
             }
 
         }
@@ -12039,10 +12057,9 @@ var igv = (function (igv) {
         }
 
 
-
         textFitsInBox = (boxX1 - boxX) > ctx.measureText(feature.name).width;
 
-        if ( (feature.name !== undefined && feature.name.toUpperCase() === selectedFeatureName) ||
+        if ((feature.name !== undefined && feature.name.toUpperCase() === selectedFeatureName) ||
             ((textFitsInBox || geneColor) && this.displayMode !== "SQUISHED" && feature.name !== undefined)) {
             geneFontStyle = {
                 font: '10px PT Sans',
@@ -12204,6 +12221,144 @@ var igv = (function (igv) {
 
 })
 (igv || {});
+
+/*
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2016-2017 The Regents of the University of California
+ * Author: Jim Robinson
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
+/**
+ * Created by jrobinso on 9/25/17.
+ */
+
+var igv = (function (igv) {
+
+
+    igv.FeatureUtils = {
+
+        packFeatures: function (features, maxRows, sorted) {
+
+            var start;
+            var end;
+
+            if (!features) return;
+
+            maxRows = maxRows || 10000;
+
+            if(!sorted) {
+                features.sort(function (a, b) {
+                    return a.start - b.start;
+                });
+            }
+
+
+
+            if (features.length === 0) {
+                return [];
+
+            } else {
+
+                var bucketList = [],
+                    allocatedCount = 0,
+                    lastAllocatedCount = 0,
+                    nextStart,
+                    row,
+                    index,
+                    bucket,
+                    feature,
+                    gap = 2,
+                    packedRows = [],
+                    bucketStart;
+
+                start = features[0].start;
+                end = features[features.length - 1].start;
+
+                bucketStart = Math.max(start, features[0].start);
+                nextStart = bucketStart;
+
+                features.forEach(function (alignment) {
+
+                    var buckListIndex = Math.max(0, alignment.start - bucketStart);
+                    if (bucketList[buckListIndex] === undefined) {
+                        bucketList[buckListIndex] = [];
+                    }
+                    bucketList[buckListIndex].push(alignment);
+                });
+
+
+                row = 0;
+
+                while (allocatedCount < features.length && packedRows.length < maxRows) {
+
+
+                    while (nextStart <= end) {
+
+                        bucket = undefined;
+
+                        while (!bucket && nextStart <= end) {
+
+                            index = nextStart - bucketStart;
+                            if (bucketList[index] === undefined) {
+                                ++nextStart;                     // No buckets at this index
+                            } else {
+                                bucket = bucketList[index];
+                            }
+
+                        } // while (bucket)
+
+                        if (!bucket) {
+                            break;
+                        }
+                        feature = bucket.pop();
+                        if (0 === bucket.length) {
+                            bucketList[index] = undefined;
+                        }
+
+                        feature.row = row;
+
+                        nextStart = feature.end + gap;
+                        ++allocatedCount;
+
+                    } // while (nextStart)
+
+                    row++;
+                    nextStart = bucketStart;
+
+                    if (allocatedCount === lastAllocatedCount) break;   // Protect from infinite loops
+
+                    lastAllocatedCount = allocatedCount;
+
+                } // while (allocatedCount)
+
+            }
+        }
+
+    }
+
+
+    return igv;
+})(igv || {});
 
 /*
  * The MIT License (MIT)
@@ -13211,6 +13366,69 @@ var igv = (function (igv) {
 /*
  * The MIT License (MIT)
  *
+ * Copyright (c) 2016-2017 The Regents of the University of California
+ * Author: Jim Robinson
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
+var igv = (function (igv) {
+
+    igv.UCSCServiceReader = function (config) {
+        this.config = config;
+    };
+
+    igv.UCSCServiceReader.prototype.readFeatures = function (chr, start, end) {
+        var self = this,
+            url = this.config.url + '&table=' + this.config.tableName + '&chr=' + chr + '&start=' + start + '&end=' + end;
+
+        return new Promise(function (fulfill, reject) {
+            igv.xhr.loadJson(url, self.config)
+                .then(function (data) {
+                    if (data) {
+                        data.forEach(function (json) {
+                            decodeJson(json);
+                        });
+                        fulfill(data);
+                    } else {
+                        fulfill(null);
+                    }
+                })
+                .catch(function (error) {
+                    reject(error);
+                });
+        });
+    };
+
+    // TODO -- generalize
+    function decodeJson(feature) {
+        if(feature.start) feature.start = Number.parseInt(feature.start);
+        if(feature.end)  feature.end = Number.parseInt(feature.end);
+    }
+
+    return igv;
+})(igv || {});
+
+/*
+ * The MIT License (MIT)
+ *
  * Copyright (c) 2014 Broad Institute
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -13916,7 +14134,7 @@ var igv = (function (igv) {
 
         return new Promise(function (fulfill, reject) {
 
-            getChrNameMap().then(function (chrAliasTable) {
+            getChrAliasTable().then(function (chrAliasTable) {
 
                 var queryChr = chrAliasTable.hasOwnProperty(chr) ? chrAliasTable[chr] : chr,
                     readURL = self.url + "/reads/search";
@@ -13937,7 +14155,7 @@ var igv = (function (igv) {
 
             }).catch(reject);
 
-            function getChrNameMap() {
+            function getChrAliasTable() {
 
                 if (self.chrAliasTable) {
                     return Promise.resolve(self.chrAliasTable);
@@ -13983,7 +14201,7 @@ var igv = (function (igv) {
                                     else {
 
                                         // Try hardcoded constants -- workaround for non-compliant data at Google
-                                        populateChrNameMap(self.chrAliasTable, self.config.datasetId);
+                                        populateChrAliasTable(self.chrAliasTable, self.config.datasetId);
 
                                         fulfill(self.chrAliasTable);
                                     }
@@ -14241,10 +14459,10 @@ var igv = (function (igv) {
     /**
      * Hardcoded hack to work around some non-compliant google datasets
      *
-     * @param chrNameMap
+     * @param chrAliasTable
      * @param datasetId
      */
-    function populateChrNameMap(chrNameMap, datasetId) {
+    function populateChrAliasTable(chrAliasTable, datasetId) {
         var i;
         if ("461916304629" === datasetId || "337315832689" === datasetId) {
             for (i = 1; i < 23; i++) {
@@ -14638,7 +14856,7 @@ var igv = (function (igv) {
 
             self.readHeader().then(function (header) {
 
-                getChrNameMap().then(function (chrNameMap) {
+                getChrAliasTable().then(function (chrAliasTable) {
 
                     var queryChr = chrAliasTable.hasOwnProperty(chr) ? chrAliasTable[chr] : chr,
                         readURL = self.url + "/variants/search";
@@ -14669,7 +14887,7 @@ var igv = (function (igv) {
         });
 
 
-        function getChrNameMap() {
+        function getChrAliasTable() {
 
             return new Promise(function (fulfill, reject) {
 
@@ -23224,12 +23442,12 @@ var igv = (function (igv) {
         if (undefined === igv.browser || undefined === igv.browser.formats) {
             return undefined;
         } else {
-            return igv.browser.formats[ name ];
+            return igv.browser.formats[name];
         }
 
     };
 
-    igv.createTrackWithConfiguration = function(conf) {
+    igv.createTrackWithConfiguration = function (conf) {
 
         var type = (undefined === conf.type) ? 'unknown_type' : conf.type.toLowerCase();
 
@@ -23239,6 +23457,7 @@ var igv = (function (igv) {
                 break;
 
             case "annotation":
+            case "snp":
             case "genes":
             case "fusionjuncspan":
                 return new igv.FeatureTrack(conf);
@@ -23279,7 +23498,7 @@ var igv = (function (igv) {
 
     };
 
-    igv.inferTrackTypes = function(config) {
+    igv.inferTrackTypes = function (config) {
 
         function translateDeprecatedTypes(config) {
 
@@ -23437,7 +23656,7 @@ var igv = (function (igv) {
 
         track.height = config.height || ('wig' === config.type ? 50 : 100);
 
-        if(config.autoHeight === undefined)  config.autoHeight = config.autoheight; // Some case confusion in the initial releasae
+        if (config.autoHeight === undefined)  config.autoHeight = config.autoheight; // Some case confusion in the initial releasae
 
         track.autoHeight = config.autoHeight === undefined ? (config.height === undefined) : config.autoHeight;
         track.minHeight = config.minHeight || Math.min(50, track.height);
@@ -23447,7 +23666,7 @@ var igv = (function (igv) {
             track.visibilityWindow = config.visibilityWindow;
         }
 
-        if(track.type === undefined) {
+        if (track.type === undefined) {
             track.type = config.type;
         }
 
@@ -23466,7 +23685,7 @@ var igv = (function (igv) {
         }
     };
 
-    igv.inferIndexPath = function(url, extension) {
+    igv.inferIndexPath = function (url, extension) {
 
         var path, idx;
 
@@ -23474,7 +23693,7 @@ var igv = (function (igv) {
             throw new Error("Cannot infer an index path for a local File.  Please select explicitly")
         }
 
-        if(url.includes("?")) {
+        if (url.includes("?")) {
             idx = url.indexOf("?");
             return url.substring(0, idx) + "." + extension + url.substring(idx);
         } else {
@@ -23563,13 +23782,13 @@ var igv = (function (igv) {
             menuItems;
 
         config =
-            {
-                popover: popover,
-                viewport:viewport,
-                genomicLocation: genomicLocation,
-                x: xOffset,
-                y: yOffset
-            };
+        {
+            popover: popover,
+            viewport: viewport,
+            genomicLocation: genomicLocation,
+            x: xOffset,
+            y: yOffset
+        };
 
         menuItems = [];
         if (viewport.trackView.track.popupMenuItemList) {
@@ -23633,7 +23852,7 @@ var igv = (function (igv) {
 
         all = [];
         if (trackView.track.menuItemList) {
-            all = menuItems.concat( igv.trackMenuItemListHelper(trackView.track.menuItemList(popover)) );
+            all = menuItems.concat(igv.trackMenuItemListHelper(trackView.track.menuItemList(popover)));
         }
 
         if (trackView.track.removable !== false) {
@@ -23653,13 +23872,13 @@ var igv = (function (igv) {
         return all;
     };
 
-    igv.trackMenuItemListHelper = function(itemList) {
+    igv.trackMenuItemListHelper = function (itemList) {
 
         var list = [];
 
         if (_.size(itemList) > 0) {
 
-            list = _.map(itemList, function(item, i) {
+            list = _.map(itemList, function (item, i) {
                 var $e;
 
                 if (item.name) {
@@ -23677,7 +23896,7 @@ var igv = (function (igv) {
                     $e.click(item.click);
                 }
 
-                return { object: $e, init: (item.init || undefined) };
+                return {object: $e, init: (item.init || undefined)};
             });
         }
 
@@ -23708,7 +23927,7 @@ var igv = (function (igv) {
         $e.text(menuItemLabel);
 
 
-        clickHandler = function(){
+        clickHandler = function () {
             var $element = $(trackView.trackDiv);
             igv.dialog.configure(dialogLabelHandler, dialogInputValue, dialogClickHandler, undefined, undefined);
             igv.dialog.show($element);
@@ -23717,7 +23936,7 @@ var igv = (function (igv) {
 
         $e.click(clickHandler);
 
-        return { object: $e, init: undefined };
+        return {object: $e, init: undefined};
     };
 
     igv.dataRangeMenuItem = function (popover, trackView) {
@@ -23736,7 +23955,7 @@ var igv = (function (igv) {
 
         $e.click(clickHandler);
 
-        return { object: $e, init: undefined };
+        return {object: $e, init: undefined};
     };
 
     igv.colorPickerMenuItem = function (popover, trackView) {
@@ -23758,13 +23977,13 @@ var igv = (function (igv) {
             defaultColor = trackView.track.config.color || igv.browser.constants.defaultColor;
 
             offset =
-                {
-                    left: ($(trackView.trackDiv).offset().left + $(trackView.trackDiv).width()) - igv.colorPicker.$container.width(),
-                    top:  $(trackView.trackDiv).offset().top
-                };
+            {
+                left: ($(trackView.trackDiv).offset().left + $(trackView.trackDiv).width()) - igv.colorPicker.$container.width(),
+                top: $(trackView.trackDiv).offset().top
+            };
 
             colorUpdateHandler = function (color) {
-                trackView.setColor( color )
+                trackView.setColor(color)
             };
 
             igv.colorPicker.configure(trackView, color, defaultColor, offset, colorUpdateHandler);
@@ -23776,7 +23995,7 @@ var igv = (function (igv) {
 
         $e.click(clickHandler);
 
-        return { object: $e, init: undefined };
+        return {object: $e, init: undefined};
 
     };
 

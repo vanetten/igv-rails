@@ -1,5 +1,5 @@
 module Igv
   module Rails
-    VERSION = "1.0.9.4"
+    VERSION = "1.0.9.5"
   end
 end

@@ -89,9 +89,9 @@ This is [igv-web](https://www.broadinstitute.org/software/igv/home) GEMified for
 		bundle gem igv-rails
 		cd igv-rails
 		mkdir -p vendor/assets/javascripts
-		curl https://igv.org/web/beta/igv-beta.js -o vendor/assets/javascripts/igv.js
+		curl http://igv.org/web/test/dist/igv.js -o vendor/assets/javascripts/igv.js
 		mkdir -p vendor/assets/stylesheets
-		curl https://igv.org/web/beta/igv-beta.css -o vendor/assets/stylesheets/igv.css
+		curl http://igv.org/web/test/dist/css/igv.css -o vendor/assets/stylesheets/igv.css
 		echo "" >> README.md; echo "# igv appended README #" >> README.md; echo "" >> README.md
 		curl https://github.com/broadinstitute/igv-web/blob/master/README.md >> README.md
 		echo "" >> LICENSE; echo "# igv appended LICENSE #" >> LICENSE; echo "" >> LICENSE

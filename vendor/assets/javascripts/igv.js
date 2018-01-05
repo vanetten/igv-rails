@@ -35740,7 +35740,7 @@ var igv = (function (igv) {
                     $fa.addClass('fa-check-hidden');
                 }
 
-                self.trackView.update();
+                self.trackView.setDataRange(undefined, undefined, self.autoscale);
             }
         });
 
@@ -35814,12 +35814,7 @@ var igv = (function (igv) {
 
 
         if (features && features.length > 0) {
-            // if (self.autoscale === undefined && self.dataRange === undefined && (typeof self.featureSource.getDefaultRange === "function")) {
-            //     defaultRange = self.featureSource.getDefaultRange();
-            //     if (!isNaN(defaultRange.min) && !isNaN(defaultRange.max)) {
-            //         self.dataRange = defaultRange;
-            //     }
-            // }
+
             if (self.autoscale || self.dataRange === undefined) {
                 var s = autoscale(features);
                 featureValueMinimum = self.config.min || s.min;      // If min is explicitly set use it
@@ -36877,7 +36872,7 @@ var igv = (function (igv) {
 
 
             // Start the recursive load cycle.  Data is fetched in chunks, if more data is available a "nextPageToken" is returned.
-            loadChunk();
+            return loadChunk();
 
             function loadChunk(pageToken) {
 
@@ -36895,40 +36890,42 @@ var igv = (function (igv) {
                         sendData: sendData,
                         contentType: "application/json",
                         headers: ga4ghHeaders()
-                    }).then(function (json) {
-                    var nextPageToken, tmp;
+                    })
+                    .then(function (json) {
+                        var nextPageToken, tmp;
 
-                    if (json) {
+                        if (json) {
 
-                        tmp = decode ? decode(json) : json;
+                            tmp = decode ? decode(json) : json;
 
-                        if (tmp) {
+                            if (tmp) {
 
-                            tmp.forEach(function (a) {
-                                var keep = true;           // TODO -- conditionally keep (downsample)
-                                if (keep) {
-                                    results.push(a);
-                                }
-                            });
-                        }
+                                tmp.forEach(function (a) {
+                                    var keep = true;           // TODO -- conditionally keep (downsample)
+                                    if (keep) {
+                                        results.push(a);
+                                    }
+                                });
+                            }
 
 
-                        nextPageToken = json["nextPageToken"];
+                            nextPageToken = json["nextPageToken"];
 
-                        if (nextPageToken) {
-                            loadChunk(nextPageToken);
+                            if (nextPageToken) {
+                                loadChunk(nextPageToken);
+                            }
+                            else {
+                                fulfill(results);
+                            }
                         }
                         else {
                             fulfill(results);
                         }
-                    }
-                    else {
-                        fulfill(results);
-                    }
 
-                }).catch(function (error) {
-                    reject(error);
-                });
+                    })
+                    .catch(function (error) {
+                        reject(error);
+                    });
             }
 
         });
@@ -37134,60 +37131,56 @@ var igv = (function (igv) {
 
         var self = this;
 
-        return new Promise(function (fulfill, reject) {
 
+        if (self.header) {
+            return Promise.resolve(self.header);
+        }
 
-            if (self.header) {
-                fulfill(self.header);
+        else {
+
+            self.header = {};
+
+            if (self.includeCalls === false) {
+                return Promise.resolve(self.header);
             }
-
             else {
 
-                self.header = {};
+                var readURL = self.url + "/callsets/search";
 
-                if (self.includeCalls === false) {
-                    fulfill(self.header);
-                }
-                else {
+                return igv.ga4ghSearch({
+                    url: readURL,
+                    fields: "nextPageToken,callSets(id,name)",
+                    body: {
+                        "variantSetIds": (Array.isArray(self.variantSetId) ? self.variantSetId : [self.variantSetId]),
+                        "pageSize": "10000"
+                    },
+                    decode: function (json) {
+                        // If specific callSetIds are specified filter to those
+                        if (self.callSetIds) {
+                            var filteredCallSets = [],
+                                csIdSet = new Set();
 
-                    var readURL = self.url + "/callsets/search";
-
-                    igv.ga4ghSearch({
-                        url: readURL,
-                        fields: "nextPageToken,callSets(id,name)",
-                        body: {
-                            "variantSetIds": (Array.isArray(self.variantSetId) ? self.variantSetId : [self.variantSetId]),
-                            "pageSize": "10000"
-                        },
-                        decode: function (json) {
-                            // If specific callSetIds are specified filter to those
-                            if (self.callSetIds) {
-                                var filteredCallSets = [],
-                                    csIdSet = new Set();
-
-                                self.callSetIds.forEach(function (csid) {
-                                    csIdSet.add(csid);
-                                })
-                                json.callSets.forEach(function (cs) {
-                                    if (csIdSet.has(cs.id)) {
-                                        filteredCallSets.push(cs);
-                                    }
-                                });
-                                return filteredCallSets;
-                            }
-                            else {
-                                return json.callSets;
-                            }
+                            self.callSetIds.forEach(function (csid) {
+                                csIdSet.add(csid);
+                            })
+                            json.callSets.forEach(function (cs) {
+                                if (csIdSet.has(cs.id)) {
+                                    filteredCallSets.push(cs);
+                                }
+                            });
+                            return filteredCallSets;
                         }
-                    }).then(function (callSets) {
+                        else {
+                            return json.callSets;
+                        }
+                    }
+                })
+                    .then(function (callSets) {
                         self.header.callSets = callSets;
-                        fulfill(self.header);
-                    }).catch(reject);
-                }
+                        return self.header;
+                    })
             }
-
-        });
-
+        }
     }
 
 
@@ -37209,7 +37202,7 @@ var igv = (function (igv) {
 
                 return igv.ga4ghSearch({
                     url: readURL,
-                    fields: (self.includeCalls ? undefined : "nextPageToken,variants(id,variantSetId,names,referenceName,start,end,referenceBases,alternateBases,quality, filter, info)"),
+                    fields: (self.includeCalls ? undefined : "nextPageToken,variants(id,variantSetId,names,referenceName,start,end,referenceBases,alternateBases,quality,filter,info)"),
                     body: {
                         "variantSetIds": (Array.isArray(self.variantSetId) ? self.variantSetId : [self.variantSetId]),
                         "callSetIds": (self.callSetIds ? self.callSetIds : undefined),
@@ -37219,10 +37212,18 @@ var igv = (function (igv) {
                         "pageSize": "10000"
                     },
                     decode: function (json) {
+
+                        var v;
+
                         var variants = [];
 
                         json.variants.forEach(function (json) {
-                            variants.push(igv.createGAVariant(json));
+                         
+                            v = igv.createGAVariant(json);
+
+                            if (!v.isRefBlock()) {
+                                variants.push(v);
+                            }
                         });
 
                         return variants;
@@ -48555,9 +48556,17 @@ var igv = (function (igv) {
     };
 
     igv.TrackView.prototype.setDataRange = function (min, max, autoscale) {
-        this.track.dataRange.min = min;
-        this.track.dataRange.max = max;
+
+        if (min !== undefined) {
+            this.track.dataRange.min = min;
+        }
+
+        if (max !== undefined) {
+            this.track.dataRange.max = max;
+        }
+
         this.track.autoscale = autoscale;
+
         this.update();
     };
 
@@ -49934,7 +49943,7 @@ var igv = (function (igv) {
             if (!infoStr) return undefined;
 
             var info = {};
-            infoStr.split(';').forEach(function (elem) {
+            infoStr.split('; ').forEach(function (elem) {
                 var element = elem.split('=');
                 info[element[0]] = element[1];
             });
@@ -49952,11 +49961,11 @@ var igv = (function (igv) {
         variant.start = parseInt(json.start);  // Might get overriden below
         variant.end = parseInt(json.end);      // Might get overriden below
         variant.pos = variant.start + 1;       // GA4GH is 0 based.
-        variant.names = arrayToCommaString(json.names);
-        variant.referenceBases = json.referenceBases + '';
-        variant.alternateBases = json.alternateBases + '';
+        variant.names = arrayToString(json.names, "; ");
+        variant.referenceBases = json.referenceBases;
+        variant.alternateBases = arrayToString(json.alternateBases);
         variant.quality = json.quality;
-        variant.filter = arrayToCommaString(json.filter);
+        variant.filter = arrayToString(json.filter);
         variant.info = json.info;
 
 
@@ -49990,10 +49999,11 @@ var igv = (function (igv) {
         //Alleles
         var altTokens = variant.alternateBases.split(","),
             minAltLength = variant.referenceBases.length,
-            maxAltLength = variant.referenceBases.length;
+            maxAltLength = variant.referenceBases.length,
+            start, end;
 
 
-        if (variant.info["PERIOD"]) {
+        if (variant.info && variant.info["PERIOD"]) {
             variant.type = 'str';
         }
 
@@ -50007,7 +50017,7 @@ var igv = (function (igv) {
             variant.start = variant.pos - 1;
             variant.end = variant.start + variant.referenceBases.length;
 
-        } else if (isRefBlock(variant.alternateBases)) {
+        } else if (isRef(variant.alternateBases)) {
             variant.type = "refblock";
         }
 
@@ -50015,14 +50025,16 @@ var igv = (function (igv) {
             variant.heterozygosity = 0;
 
         } else {
-            altTokens.forEach(function (alt) {
+
+            altTokens.forEach(function (alt, index) {
+
                 var a, s, e, diff;
 
                 variant.alleles.push(alt);
 
                 // Adjust for padding, used for insertions and deletions, unless variant is a short tandem repeat.
 
-                if (!("str" === variant.type) && alt.length > 0) {
+                if ("str" !== variant.type && alt.length > 0) {
 
                     diff = variant.referenceBases.length - alt.length;
 
@@ -50033,20 +50045,25 @@ var igv = (function (igv) {
                     } else if (diff < 0) {
                         // Insertion, assume left padded, insertion begins to "right" of last ref base
                         s = variant.pos - 1 + variant.referenceBases.length;
-                        e = s + 1;     // Insertion between s & 3
+                        e = s + 1;     // Insertion between s & e
                     } else {
                         s = variant.pos - 1;
                         e = s + 1;
                     }
-                    variant.start = variant.start === undefined ? s : Math.min(variant.start, s);
-                    variant.end = variant.end === undefined ? e : Math.max(variant.end, e);
+
+                    start = start === undefined ? s : Math.min(start, s);
+                    end = end === undefined ? e : Math.max(end, e);
                 }
 
                 minAltLength = Math.min(minAltLength, alt.length);
                 maxAltLength = Math.max(maxAltLength, alt.length);
 
             });
-            if (variant.info.AC && variant.info.AN) {
+
+            variant.start = start;
+            variant.end = end;
+
+            if (variant.info && variant.info.AC && variant.info.AN) {
                 variant.heterozygosity = calcHeterozygosity(variant.info.AC, variant.info.AN).toFixed(3);
             }
         }
@@ -50073,6 +50090,16 @@ var igv = (function (igv) {
             refFrac = (an - altCount) / an;
             sum += refFrac * refFrac;
             return 1 - sum;
+        };
+
+
+        function isRef(altAlleles) {
+
+            return !altAlleles ||
+                altAlleles.trim().length === 0 ||
+                altAlleles === "<NON_REF>" ||
+                altAlleles === "<*>";
+
         };
 
     }
@@ -50111,29 +50138,27 @@ var igv = (function (igv) {
         if (this.info) {
             fields.push('<hr>');
             Object.keys(this.info).forEach(function (key) {
-                fields.push({name: key, value: arrayToCommaString(self.info[key])});
+                fields.push({name: key, value: arrayToString(self.info[key])});
             });
         }
         return fields;
 
+
+
     };
-    
-    
-    function arrayToCommaString(value) {
+
+    igv.Variant.prototype.isRefBlock = function () {
+        return "refblock" === this.type;
+    }
+
+    function arrayToString(value, delim) {
+
+        if(delim === undefined) delim = ",";
+
         if (!(Array.isArray(value))) {
             return value;
         }
-        return value.join(',');
-    }
-
-
-    function isRefBlock(altAlleles) {
-
-        return !altAlleles ||
-            altAlleles.trim().length === 0 ||
-            altAlleles === "\u003cNON_REF\u003e" ||
-            altAlleles === "\u003c*\u003e";
-
+        return value.join(delim);
     }
 
     return igv;
@@ -50390,7 +50415,7 @@ var igv = (function (igv) {
                 ctx.fillRect(px, py, pw, h);
 
 
-                if (callSets && variant.calls && "COLLAPSED" !== this.displayMode) {
+                if (nCalls > 0 && variant.calls && "COLLAPSED" !== this.displayMode) {
 
                     h = callHeight;
 
@@ -51071,8 +51096,8 @@ var igv = (function (igv) {
                 if (tokens.length >= 8) {
                 
                     variant = igv.createVCFVariant(tokens);
-                    
-                    if("refblock" === variant.type) continue;     // Skip reference blocks
+
+                    if (variant.isRefBlock())  continue;     // Skip reference blocks
                    
                     variant.header = this.header;       // Keep a pointer to the header to interpret fields for popup text
                     allFeatures.push(variant);
